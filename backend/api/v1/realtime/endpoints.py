@@ -141,6 +141,11 @@ async def handle_client_uplink(
             # 1. [핵심] bytes, text 등 모든 유형의 메시지를 수신 (논블로킹 await)
             message = await client_ws.receive()
 
+            # WebSocket 연결이 끊긴 경우 체크
+            if message.get("type") == "websocket.disconnect":
+                logging.info("Uplink Handler: 클라이언트 연결 정상 종료 감지.")
+                break
+
             # 2. bytes (오디오 데이터): Deepgram으로 즉시 중계
             if message.get("bytes"):
                 audio_data = message["bytes"]
@@ -183,7 +188,14 @@ async def handle_client_uplink(
                     logging.error(f"Uplink Handler: 비정상 텍스트 메시지 수신 무시: {message['text']}")
             
     except WebSocketDisconnect:
-        logging.error("Uplink Handler: 클라이언트 연결 끊김 감지.")
+        logging.info("Uplink Handler: 클라이언트 연결 끊김 감지 (WebSocketDisconnect).")
+    except RuntimeError as e:
+        # "Cannot call 'receive' once a disconnect message has been received" 에러 처리
+        if "disconnect" in str(e).lower():
+            logging.info("Uplink Handler: 연결 종료 후 receive 시도 - 정상 종료 처리.")
+        else:
+            logging.error(f"Uplink Handler 런타임 오류: {e}")
+            raise
     except Exception as e:
         logging.error(f"Uplink Handler 오류: {e}")
     finally:
@@ -358,44 +370,61 @@ async def get_summary_and_send(
         time_window = f"{start_minutes:02d}:{int((elapsed_total - summary_state['summary_interval']) % 60):02d} - {end_minutes:02d}:{int(elapsed_total % 60):02d}"
         
         logging.info(f"요약 생성 시작: 시퀀스={sequence}, 구간={time_window}, 텍스트수={len(buffer_texts)}")
-        
+
         # 요약 생성 시작 알림
-        await client_ws.send_json({
-            "type": "summary_generating",
-            "sequence": sequence,
-            "time_window": time_window
-        })
-        
+        try:
+            await client_ws.send_json({
+                "type": "summary_generating",
+                "sequence": sequence,
+                "time_window": time_window
+            })
+        except RuntimeError as e:
+            if "disconnect" in str(e).lower() or "closed" in str(e).lower():
+                logging.info(f"Summary Task: 클라이언트 연결 종료됨 - 알림 전송 스킵")
+                return
+            else:
+                raise
+
         # LLM 서비스로 요약 생성
         result = await llm_service.generate_timeline_summary(
             texts=buffer_texts,
             previous_summary=summary_state["previous_summary"],
             time_window=time_window
         )
-        
+
         # 요약 결과 전송
-        await client_ws.send_json({
-            "type": "timeline_summary",
-            "sequence": sequence,
-            "time_window": time_window,
-            "content": result["incremental_summary"],
-            "rolling_summary": result["rolling_summary"],
-            "timestamp": current_time
-        })
-        
-        # 상태 업데이트
-        summary_state["previous_summary"] = result["rolling_summary"]
-        summary_state["last_summary_time"] = current_time
-        summary_state["transcript_buffer"].clear()
-        
-        logging.info(f"요약 생성 완료: 시퀀스={sequence}")
-        
+        try:
+            await client_ws.send_json({
+                "type": "timeline_summary",
+                "sequence": sequence,
+                "time_window": time_window,
+                "content": result["incremental_summary"],
+                "rolling_summary": result["rolling_summary"],
+                "timestamp": current_time
+            })
+
+            # 상태 업데이트
+            summary_state["previous_summary"] = result["rolling_summary"]
+            summary_state["last_summary_time"] = current_time
+            summary_state["transcript_buffer"].clear()
+
+            logging.info(f"요약 생성 완료: 시퀀스={sequence}")
+
+        except RuntimeError as e:
+            if "disconnect" in str(e).lower() or "closed" in str(e).lower():
+                logging.info(f"Summary Task: 클라이언트 연결 종료됨 - 결과 전송 스킵")
+            else:
+                raise
+
     except Exception as e:
         logging.error(f"요약 생성 오류: {e}")
-        await client_ws.send_json({
-            "type": "summary_error",
-            "message": f"요약 생성 실패: {str(e)}"
-        })
+        try:
+            await client_ws.send_json({
+                "type": "summary_error",
+                "message": f"요약 생성 실패: {str(e)}"
+            })
+        except:
+            pass  # 연결이 끊긴 경우 무시
 
 
 async def get_translation_and_send(client_ws: WebSocket, text: str, llm_service: LLMService):
@@ -407,16 +436,25 @@ async def get_translation_and_send(client_ws: WebSocket, text: str, llm_service:
     try:
         # 1. core/llm_service.py의 코어 함수 호출 (실제 API 통신)
         translated_text = await llm_service.get_translation(text)
-        
+
         # 2. 번역 결과를 React로 전송 (논블로킹)
-        await client_ws.send_json({
-            "type": "translation",
-            "original_text": text,
-            "translated_text": translated_text
-        })
-        logging.info(f"Translation Task Finished for: {text}")
-        
+        try:
+            await client_ws.send_json({
+                "type": "translation",
+                "original_text": text,
+                "translated_text": translated_text
+            })
+            logging.info(f"Translation Task Finished for: {text}")
+        except RuntimeError as e:
+            if "disconnect" in str(e).lower() or "closed" in str(e).lower():
+                logging.info(f"Translation Task: 클라이언트 연결 종료됨 - 전송 스킵")
+            else:
+                raise
+
     except Exception as e:
         logging.error(f"OpenAI 번역 오류: {e}")
-        # 오류 발생 시 클라이언트에게 알림
-        await client_ws.send_json({"type": "error", "message": f"Translation failed: {e}"})
+        # 오류 발생 시 클라이언트에게 알림 (연결이 살아있는 경우에만)
+        try:
+            await client_ws.send_json({"type": "error", "message": f"Translation failed: {e}"})
+        except:
+            pass  # 연결이 끊긴 경우 무시
