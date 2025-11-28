@@ -12,7 +12,7 @@ load_dotenv()
 logger = setup_logger(__name__)
 
 class STTService:
-    """STT ?�비?? Deepgram ?�결 ?�보 관�?�?배치 STT 처리�??�당?�니??"""
+    """STT Service: Manages Deepgram connection info and handles batch STT processing."""
     
     def __init__(self):
         logger.info("Initializing STTService", extra={"service": "stt"})
@@ -20,19 +20,20 @@ class STTService:
         self.DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY")
         if not self.DEEPGRAM_API_KEY:
             logger.error("DEEPGRAM_API_KEY not set", extra={"service": "stt"})
-            raise ValueError("DEEPGRAM_API_KEY 환경 변수가 설정되지 않았습니다.")
+            raise ValueError("DEEPGRAM_API_KEY environment variable is not set.")
 
         self.DEEPGRAM_BASE_URL = "wss://api.deepgram.com/v1/listen"
         self.DEEPGRAM_PARAMS = (
-            # "?punctuate=true"  # 구두??추�?
-            "?language=ko"     # ?�국??지??
-            "&model=nova-2"    # 최신 고성??모델
-            "&diarize=true"    # ?�자 분리 (Pass 1 ?�심 기능)
-            "&encoding=linear16" # ?�디???�코???�식
-            "&sample_rate=16000" # ?�디???�플�??�도 (마이???�일 ?��?)
-            "&smart_format=true" # ?�마???�맷??(?�자, ?�짜 ??
-            # "&channel=1"        # ?�일 채널 ?�디??
-            # "&endpointer=true" # ?�성 ?�동 감�?(?�택 ?�항, ?�요 ???�성??
+            # "?punctuate=true"  # Add punctuation
+            "?language=ko"     # Support Korean
+            "&model=nova-2"    # Latest high-performance model
+            "&diarize=true"    # Speaker diarization
+            "&encoding=linear16" # Audio encoding format
+            "&sample_rate=16000" # Audio sample rate (matches microphone)
+            "&smart_format=true" # Smart formatting (dates, times, etc.)
+            "&multichannel=true" # Enable multichannel
+            # "&channel=1"        # Single channel audio
+            # "&endpointer=true" # Voice activity detection
         )
         
         logger.info("STTService initialized successfully", extra={
@@ -42,14 +43,14 @@ class STTService:
             "diarization_enabled": True
         })
         
-        # TODO: (팀원 B) ElevenLabs 클라이언트 초기화 (배치 STT용)
+        # TODO: (Team Member B) Initialize ElevenLabs client (for batch STT)
     
     @api_retry_stt
     def get_realtime_stt_url(self) -> tuple[str, dict]:
         """
-        FastAPI가 Deepgram WebSocket에 연결하는 데 필요한 URL과 헤더를 반환합니다.
+        Returns the URL and headers required for FastAPI to connect to the Deepgram WebSocket.
         
-        자동 재시도: 네트워크 오류 시 최대 3회 재시도
+        Auto-retry: Retries up to 3 times on network errors.
         """
         logger.debug("Generating Deepgram WebSocket URL", extra={"service": "stt"})
             

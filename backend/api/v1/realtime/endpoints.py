@@ -231,7 +231,16 @@ async def forward_to_client(
                 # 2. 최종 텍스트 처리: 화자 정보와 함께 최종 문장 구성
                 words = result.get("channel", {}).get("alternatives", [{}])[0].get("words", [])
                 speaker_id = words[0].get("speaker") if words else None
-                speaker_tag = f"[Speaker {speaker_id}] " if speaker_id is not None else ""
+                
+                # 채널 정보 확인 (0: Mic, 1: System)
+                channel_index = result.get("channel_index", [0, 1])[0]
+                
+                if speaker_id is not None:
+                    prefix = "System" if channel_index == 1 else "Mic"
+                    speaker_tag = f"[{prefix} Speaker {speaker_id}] "
+                else:
+                    speaker_tag = ""
+
                 final_text = speaker_tag + transcript
                 
                 # 3. (React 전송) 최종 전사 텍스트를 React로 전송
