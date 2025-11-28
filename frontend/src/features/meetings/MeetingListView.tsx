@@ -362,14 +362,6 @@ export function MeetingListView({ meetings, onUpdateMeeting, onDeleteMeeting }: 
                         <Eye className="w-4 h-4" />
                         상세 보기
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => handleSingleDelete(meeting.id, e)}
-                        className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
                     </div>
                   </div>
                 </CardContent>
