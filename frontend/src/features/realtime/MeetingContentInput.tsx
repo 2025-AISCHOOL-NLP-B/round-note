@@ -205,12 +205,12 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
     };
   }, [isRecording]);
 
-  // 실시간 요약 생성 (10초마다)
+  // 실시간 요약 생성 (60초마다)
   useEffect(() => {
     if (isRecording && content.trim().length > 50) {
       summaryIntervalRef.current = setInterval(() => {
         generateRealtimeSummary();
-      }, 10000); // 10초마다 요약 생성
+      }, 60000); // 60초마다 요약 생성
     } else {
       if (summaryIntervalRef.current) {
         clearInterval(summaryIntervalRef.current);
@@ -240,7 +240,7 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
         signal: controller.signal as AbortSignal,
       });
       clearTimeout(timeout);
-      
+
       const result = await response.json();
       if (result?.summary) {
         setRealtimeSummary(result.summary);
