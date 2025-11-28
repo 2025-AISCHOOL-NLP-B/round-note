@@ -500,8 +500,17 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
         failed: result.summary.failed_count,
       });
       
+      // Jira 이슈 URL 저장 (첫 번째 생성된 이슈 또는 업데이트된 이슈)
+      const firstIssue = result.created[0] || result.updated[0];
+      const jiraUrl = firstIssue?.issue_url || (result.jira_base_url ? `${result.jira_base_url}/browse/${selectedProject}` : null);
+      
       if (result.summary.failed_count === 0) {
         toast.success(`Jira 동기화 완료! (생성: ${result.summary.created_count}, 업데이트: ${result.summary.updated_count})`);
+        
+        // Jira 프로젝트 페이지 자동 열기
+        if (jiraUrl) {
+          window.open(jiraUrl, '_blank');
+        }
       } else {
         const successCount = result.summary.created_count + result.summary.updated_count;
         toast.warning(`일부 항목 동기화 실패 (성공: ${successCount}, 실패: ${result.summary.failed_count})`);
