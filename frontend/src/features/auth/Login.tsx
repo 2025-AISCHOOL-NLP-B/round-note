@@ -53,17 +53,6 @@ export function Login({ onLogin, onShowRegister }: LoginProps) {
       setError('로그인 중 오류가 발생했습니다. 다시 시도해주세요.');
     }
   }
-  const handleNaverLogin = () => {
-    console.log('네이버 로그인 시도');
-    alert('네이버 로그인 기능은 실제 서비스에서 OAuth 2.0을 통해 구현됩니다.');
-    onLogin();
-  };
-
-  const handleKakaoLogin = () => {
-    console.log('카카오 로그인 시도');
-    alert('카카오 로그인 기능은 실제 서비스에서 Kakao SDK를 통해 구현됩니다.');
-    onLogin();
-  };
 
   const handleGoogleLogin = () => {
     console.log('구글 로그인 시도');
@@ -160,26 +149,6 @@ export function Login({ onLogin, onShowRegister }: LoginProps) {
 
           {/* 소셜 로그인 */}
           <div className="space-y-2">
-            <Button
-              onClick={handleNaverLogin}
-              className="w-full h-11 bg-[#03C75A] hover:bg-[#02b350] text-white"
-            >
-              <svg className="w-5 h-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
-                <path d="M13.3 11.4L6.7 0H0v20h6.7V8.6L13.3 20H20V0h-6.7z" />
-              </svg>
-              네이버로 시작하기
-            </Button>
-
-            <Button
-              onClick={handleKakaoLogin}
-              className="w-full h-11 bg-[#FEE500] hover:bg-[#e5cf00] text-[#000000] border-0"
-            >
-              <svg className="w-5 h-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
-                <path d="M10 3C5.589 3 2 5.848 2 9.375c0 2.278 1.474 4.282 3.69 5.445-.142.528-.923 3.255-1.053 3.719-.16.565.207.557.437.405.183-.121 2.676-1.787 3.102-2.076.607.095 1.23.145 1.864.145 4.411 0 8-2.848 8-6.375S14.411 3 10 3z" />
-              </svg>
-              카카오로 시작하기
-            </Button>
-
             <Button
               onClick={handleGoogleLogin}
               variant="outline"

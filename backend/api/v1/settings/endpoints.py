@@ -643,19 +643,50 @@ async def get_my_notion_pages(
     
     try:
         config = notion_setting.CONFIG
+        print(f"[DEBUG] Config keys: {config.keys() if config else 'None'}")
+        print(f"[DEBUG] Config: {config}")
+        
+        if not config or "api_token" not in config:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Notion configuration is invalid. Please re-configure Notion integration."
+            )
+        
         decrypted_token = decrypt_data(config["api_token"])
+        print(f"[DEBUG] Token decrypted successfully")
         
         notion = NotionService(api_token=decrypted_token)
+        print(f"[DEBUG] NotionService initialized")
+        
         pages = notion.search_pages(query="", include_workspace=True)
+        print(f"[DEBUG] Found {len(pages)} pages")
         
         return {
             "pages": pages,
             "count": len(pages)
         }
+    except requests.exceptions.HTTPError as e:
+        error_detail = f"Notion API error {e.response.status_code}"
+        try:
+            error_json = e.response.json()
+            if "message" in error_json:
+                error_detail += f": {error_json['message']}"
+        except:
+            error_detail += f": {e.response.text[:200]}"
+        
+        print(f"[ERROR] {error_detail}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_detail
+        )
     except Exception as e:
+        import traceback
+        error_detail = f"Failed to fetch Notion pages: {type(e).__name__}: {str(e)}"
+        print(f"[ERROR] {error_detail}")
+        print(f"[ERROR] Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch Notion pages: {str(e)}"
+            detail=error_detail
         )
 
 
@@ -690,8 +721,26 @@ async def get_my_notion_databases(
             "databases": databases,
             "count": len(databases)
         }
+    except requests.exceptions.HTTPError as e:
+        error_detail = f"Notion API error {e.response.status_code}"
+        try:
+            error_json = e.response.json()
+            if "message" in error_json:
+                error_detail += f": {error_json['message']}"
+        except:
+            error_detail += f": {e.response.text[:200]}"
+        
+        print(f"[ERROR] {error_detail}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_detail
+        )
     except Exception as e:
+        import traceback
+        error_detail = f"Failed to fetch Notion databases: {type(e).__name__}: {str(e)}"
+        print(f"[ERROR] {error_detail}")
+        print(f"[ERROR] Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch Notion databases: {str(e)}"
+            detail=error_detail
         )

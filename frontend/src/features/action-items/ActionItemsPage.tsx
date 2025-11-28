@@ -4,11 +4,11 @@ import { Button } from '@/shared/ui/button';
 import { Badge } from '@/shared/ui/badge';
 import { Checkbox } from '@/shared/ui/checkbox';
 import { Input } from '@/shared/ui/input';
-import { 
-  CheckCircle2, 
-  Circle, 
-  User, 
-  Clock, 
+import {
+  CheckCircle2,
+  Circle,
+  User,
+  Clock,
   Calendar,
   AlertCircle
 } from 'lucide-react';
@@ -24,45 +24,50 @@ interface ActionItemsPageProps {
 export function ActionItemsPage({ meetings: meetingsProp, onUpdateMeeting }: ActionItemsPageProps) {
   // 로컬 상태로 meetings 관리하여 즉시 업데이트 반영
   const [meetings, setMeetings] = useState(meetingsProp);
-  
+
   // meetings prop이 변경되면 로컬 상태도 업데이트
   React.useEffect(() => {
     console.log('[ActionItemsPage] Meetings prop updated:', meetingsProp);
     setMeetings(meetingsProp);
   }, [meetingsProp]);
-  
+
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'completed' | 'pending'>('all');
   const [selectedMeetingId, setSelectedMeetingId] = useState<string | 'all'>('all');
 
   // 회의별로 그룹화된 액션아이템 생성
   const groupedItems = useMemo(() => {
-    return meetings.map(meeting => ({
-      id: meeting.id,
-      title: meeting.title,
-      date: meeting.date,
-      actionItems: meeting.actionItems.filter(item => {
-        // 검색 필터
-        if (searchQuery) {
-          const q = searchQuery.toLowerCase();
-          if (
-            !item.text.toLowerCase().includes(q) &&
-            !item.assignee.toLowerCase().includes(q)
-          ) return false;
-        }
-        // 상태 필터
-        if (filterStatus !== 'all') {
-          const isCompleted = filterStatus === 'completed';
-          if (item.completed !== isCompleted) return false;
-        }
-        return true;
-      }).sort((a, b) => {
-        if (!a.dueDate && !b.dueDate) return 0;
-        if (!a.dueDate) return 1;
-        if (!b.dueDate) return -1;
-        return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
-      }),
-    }));
+    return meetings
+      .map(meeting => ({
+        id: meeting.id,
+        title: meeting.title,
+        date: meeting.date,
+        actionItems: meeting.actionItems
+          .filter(item => {
+            // 검색 필터
+            if (searchQuery) {
+              const q = searchQuery.toLowerCase();
+              if (
+                !item.text.toLowerCase().includes(q) &&
+                !item.assignee.toLowerCase().includes(q)
+              ) return false;
+            }
+            // 상태 필터
+            if (filterStatus !== 'all') {
+              const isCompleted = filterStatus === 'completed';
+              if (item.completed !== isCompleted) return false;
+            }
+            return true;
+          })
+          .sort((a, b) => {
+            if (!a.dueDate && !b.dueDate) return 0;
+            if (!a.dueDate) return 1;
+            if (!b.dueDate) return -1;
+            return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+          }),
+      }))
+      // ✅ 액션아이템이 하나도 없는 회의는 제외
+      .filter(group => group.actionItems.length > 0);
   }, [meetings, searchQuery, filterStatus]);
 
   const displayedGroups = selectedMeetingId === 'all'
@@ -83,11 +88,11 @@ export function ActionItemsPage({ meetings: meetingsProp, onUpdateMeeting }: Act
       ai.id === itemId ? { ...ai, completed: newCompleted } : ai
     );
     const updatedMeeting = { ...meeting, actionItems: updatedActionItems };
-    
+
     // 로컬 meetings 배열 업데이트
     setMeetings(meetings.map(m => m.id === meetingId ? updatedMeeting : m));
     console.log('[ActionItemsPage] Local meetings state updated');
-    
+
     // 부모에게 전파
     onUpdateMeeting(updatedMeeting);
 
@@ -116,11 +121,11 @@ export function ActionItemsPage({ meetings: meetingsProp, onUpdateMeeting }: Act
       ai.id === itemId ? { ...ai, [field]: value } : ai
     );
     const updatedMeeting = { ...meeting, actionItems: updatedActionItems };
-    
+
     // 로컬 meetings 배열 업데이트
     setMeetings(meetings.map(m => m.id === meetingId ? updatedMeeting : m));
     console.log('[ActionItemsPage] Local meetings state updated (handleUpdateActionItem)');
-    
+
     // 부모에게 전파
     onUpdateMeeting(updatedMeeting);
 
@@ -260,10 +265,10 @@ export function ActionItemsPage({ meetings: meetingsProp, onUpdateMeeting }: Act
                     {/* 담당자 / 마감일 */}
                     <div className="grid grid-cols-2 gap-3 ml-8 mt-2 items-center">
                       <div className="flex items-center gap-2">
-                        <Avatar 
-                          name={item.assignee} 
-                          src={item.assigneeAvatar} 
-                          size={32} 
+                        <Avatar
+                          name={item.assignee}
+                          src={item.assigneeAvatar}
+                          size={32}
                         />
                         <Input
                           key={`assignee-${group.id}-${item.id}`}

@@ -26,6 +26,50 @@ class LLMService:
         self.client = AsyncOpenAI(api_key=OPENAI_API_KEY)
         # TODO: (권현재) LangChain, RAG 관련 객체 초기화 (추후)
 
+    async def get_simple_summary(self, content: str) -> str:
+        """
+        단순 텍스트 요약 (실시간 요약용, 액션 아이템 없이 요약만)
+        
+        Args:
+            content: 회의 내용 텍스트
+            
+        Returns:
+            str: 요약된 회의 내용
+        """
+        if not content or not content.strip():
+            return ""
+        
+        try:
+            chat_completion = await self.client.chat.completions.create(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": """You are a professional real-time meeting summarizer. 
+Create a brief and concise summary of the meeting content so far.
+
+Format your summary in Korean as:
+## 현재까지 논의된 내용
+- 핵심 요점들 (3-5개)
+
+Keep it short and focused on key points only."""
+                    },
+                    {
+                        "role": "user",
+                        "content": f"다음 회의 내용을 간략하게 요약해주세요:\n\n{content}"
+                    }
+                ],
+                model="gpt-4o-mini",
+                temperature=0.3,
+                max_tokens=500
+            )
+            
+            summary = chat_completion.choices[0].message.content.strip()
+            return summary
+            
+        except Exception as e:
+            print(f"LLM Simple Summary Error: {e}")
+            return f"[요약 생성 오류: {e}]"
+
     async def generate_summary(self, texts: List[str]) -> str:
         """
         회의록 텍스트 리스트를 받아서 요약 생성

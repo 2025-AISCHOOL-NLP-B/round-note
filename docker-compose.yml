@@ -25,7 +25,7 @@ services:
   backend:
     container_name: roundnote_backend
     # 위에서 작성한 backend/Dockerfile을 사용하여 이미지를 빌드합니다.
-    build: 
+    build:
       context: .
       dockerfile: ./backend/Dockerfile
     env_file:
@@ -42,7 +42,7 @@ services:
       - ./backend:/app/backend  # 코드 변경 시 자동 반영을 위해 소스 코드 마운트
       - ./audio_storage:/app/audio_storage  # 오디오 파일 저장소 마운트
     working_dir: /app/backend
-    command: /bin/sh -c "alembic upgrade head && uvicorn backend.main:app --host 0.0.0.0 --port 8000"
+    command: /bin/sh -c "alembic upgrade head && uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload"
 
 # PostgreSQL 데이터 영속성 볼륨 정의
 volumes:

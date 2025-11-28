@@ -5,6 +5,7 @@
  */
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { handleAuthResponse } from '@/utils/auth';
 
 // 공통 헤더 생성 (httpOnly Cookie 사용)
 const getHeaders = (): HeadersInit => {
@@ -83,10 +84,7 @@ export const getMeetingSummary = async (meetingId: string): Promise<SummaryRespo
     getFetchOptions({ method: 'GET' })
   );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to fetch summary' }));
-    throw new Error(error.detail || 'Failed to fetch summary');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -99,10 +97,7 @@ export const getMeetingActionItems = async (meetingId: string): Promise<ActionIt
     getFetchOptions({ method: 'GET' })
   );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to fetch action items' }));
-    throw new Error(error.detail || 'Failed to fetch action items');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -115,10 +110,7 @@ export const getFullReport = async (meetingId: string): Promise<FullReportRespon
     getFetchOptions({ method: 'GET' })
   );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to fetch full report' }));
-    throw new Error(error.detail || 'Failed to fetch full report');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -131,10 +123,7 @@ export const regenerateSummary = async (meetingId: string): Promise<RegenerateRe
     getFetchOptions({ method: 'POST' })
   );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to regenerate summary' }));
-    throw new Error(error.detail || 'Failed to regenerate summary');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -151,10 +140,7 @@ export const searchMeetingContent = async (
     getFetchOptions({ method: 'GET' })
   );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Search failed' }));
-    throw new Error(error.detail || 'Search failed');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -177,10 +163,7 @@ export const chatWithMeeting = async (
     })
   );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Chat failed' }));
-    throw new Error(error.detail || 'Chat failed');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -201,10 +184,7 @@ export const saveJiraSettings = async (settings: {
     })
   );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to save Jira settings' }));
-    throw new Error(error.detail || 'Failed to save Jira settings');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -222,10 +202,7 @@ export const getJiraSettings = async (): Promise<{
     getFetchOptions({ method: 'GET' })
   );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Jira settings not found' }));
-    throw new Error(error.detail || 'Jira settings not found');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -238,10 +215,7 @@ export const deleteJiraSettings = async (): Promise<{ message: string }> => {
     getFetchOptions({ method: 'DELETE' })
   );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to delete Jira settings' }));
-    throw new Error(error.detail || 'Failed to delete Jira settings');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -259,10 +233,7 @@ export const saveNotionSettings = async (settings: {
     })
   );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to save Notion settings' }));
-    throw new Error(error.detail || 'Failed to save Notion settings');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -279,10 +250,7 @@ export const getNotionSettings = async (): Promise<{
     getFetchOptions({ method: 'GET' })
   );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Notion settings not found' }));
-    throw new Error(error.detail || 'Notion settings not found');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -295,10 +263,7 @@ export const deleteNotionSettings = async (): Promise<{ message: string }> => {
     getFetchOptions({ method: 'DELETE' })
   );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to delete Notion settings' }));
-    throw new Error(error.detail || 'Failed to delete Notion settings');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -317,10 +282,7 @@ export const searchNotionPages = async (apiToken: string): Promise<{
     })
   );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to fetch Notion pages' }));
-    throw new Error(error.detail || 'Failed to fetch Notion pages');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -339,10 +301,7 @@ export const searchNotionDatabases = async (apiToken: string): Promise<{
     })
   );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to fetch Notion databases' }));
-    throw new Error(error.detail || 'Failed to fetch Notion databases');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -358,10 +317,7 @@ export const getMyNotionPages = async (): Promise<{
     getFetchOptions({ method: 'GET' })
   );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to fetch my Notion pages' }));
-    throw new Error(error.detail || 'Failed to fetch my Notion pages');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -377,10 +333,7 @@ export const getMyNotionDatabases = async (): Promise<{
     getFetchOptions({ method: 'GET' })
   );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to fetch my Notion databases' }));
-    throw new Error(error.detail || 'Failed to fetch my Notion databases');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -400,10 +353,7 @@ export const getJiraProjectUsers = async (projectKey: string): Promise<{
     getFetchOptions({ method: 'GET' })
   );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to fetch Jira users' }));
-    throw new Error(error.detail || 'Failed to fetch Jira users');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -423,10 +373,7 @@ export const getJiraPriorities = async (projectKey: string): Promise<{
     getFetchOptions({ method: 'GET' })
   );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to fetch Jira priorities' }));
-    throw new Error(error.detail || 'Failed to fetch Jira priorities');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -442,10 +389,7 @@ export const getJiraProjects = async (): Promise<{
     getFetchOptions({ method: 'GET' })
   );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to fetch Jira projects' }));
-    throw new Error(error.detail || 'Failed to fetch Jira projects');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -455,7 +399,8 @@ export const getJiraProjects = async (): Promise<{
  */
 export const pushToJira = async (
   meetingId: string,
-  projectKey: string
+  projectKey: string,
+  itemIds?: string[]
 ): Promise<{
   message: string;
   project_key: string;
@@ -472,14 +417,14 @@ export const pushToJira = async (
   const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/action-items/to-jira`, 
     getFetchOptions({
       method: 'POST',
-      body: JSON.stringify({ project_key: projectKey }),
+      body: JSON.stringify({ 
+        project_key: projectKey,
+        item_ids: itemIds
+      }),
     })
   );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to push to Jira' }));
-    throw new Error(error.detail || 'Failed to push to Jira');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -506,10 +451,7 @@ export const createActionItem = async (
     })
   );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to create action item' }));
-    throw new Error(error.detail || 'Failed to create action item');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -544,12 +486,7 @@ export const updateActionItem = async (
 
     console.log('[updateActionItem] Response status:', response.status, response.statusText);
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Failed to update action item' }));
-      const errorMessage = typeof error.detail === 'string' ? error.detail : JSON.stringify(error);
-      console.error('[updateActionItem] Error response:', error);
-      throw new Error(errorMessage);
-    }
+    await handleAuthResponse(response);
 
     const result = await response.json();
     console.log('[updateActionItem] Success:', result);
@@ -574,10 +511,7 @@ export const deleteActionItem = async (
     getFetchOptions({ method: 'DELETE' })
   );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to delete action item' }));
-    throw new Error(error.detail || 'Failed to delete action item');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -590,10 +524,7 @@ export const pushToNotion = async (meetingId: string): Promise<any> => {
     getFetchOptions({ method: 'POST' })
   );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to push to Notion' }));
-    throw new Error(error.detail || 'Failed to push to Notion');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -624,10 +555,7 @@ export const exportToNotionComprehensive = async (
     body: JSON.stringify({ parent_page_id: parentPageId }),
   });
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to export to Notion' }));
-    throw new Error(error.detail || 'Failed to export to Notion');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };
@@ -651,10 +579,7 @@ export const exportActionItemsToNotion = async (
     body: JSON.stringify({ database_id: databaseId }),
   });
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to export action items to Notion' }));
-    throw new Error(error.detail || 'Failed to export action items to Notion');
-  }
+  await handleAuthResponse(response);
 
   return response.json();
 };

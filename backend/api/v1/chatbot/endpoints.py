@@ -166,6 +166,10 @@ def ask_chatbot_fulltext(
         - answer: LLM이 생성한 답변
         - used_meetings: 답변에 사용된 회의 정보 (ID, 제목, 원문 길이)
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"챗봇 풀텍스트 요청 - 사용자: {current_user.USER_ID}, 회의 수: {len(payload.meeting_ids)}, 질문: {payload.question[:50]}...")
 
     # 1) 회의 존재 여부 사전 확인
     meetings = (
@@ -173,6 +177,8 @@ def ask_chatbot_fulltext(
         .filter(models.Meeting.MEETING_ID.in_(payload.meeting_ids))
         .all()
     )
+    
+    logger.info(f"조회된 회의 수: {len(meetings)}")
 
     if not meetings:
         raise HTTPException(
@@ -202,16 +208,21 @@ def ask_chatbot_fulltext(
     # 2) 서비스 호출
     try:
         service = ChatbotService()
-        return service.answer_question_fulltext(
+        logger.info("ChatbotService 호출 시작")
+        result = service.answer_question_fulltext(
             db=db,
             payload=payload,
         )
+        logger.info("ChatbotService 호출 성공")
+        return result
     except ValueError as e:
+        logger.error(f"챗봇 ValueError: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
     except Exception as e:
+        logger.error(f"챗봇 처리 중 오류: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"챗봇 처리 중 오류가 발생했습니다: {str(e)}",

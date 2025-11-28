@@ -64,6 +64,7 @@ __pycache__/
 .env.development.local
 .env.test.local
 .env.production.local
+.env.docker
 
 # Local Data/Storage (User Uploads, DB files, VAD files)
 audio_storage/
@@ -78,3 +79,7 @@ docker-compose.override.yml
 
 # 압축파일 제외
 *.zip*.zip 
+
+.claude/
+
+AUTH_SESSION_MANAGEMENT_GUIDE.md

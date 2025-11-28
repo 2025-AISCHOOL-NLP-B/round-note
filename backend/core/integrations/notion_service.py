@@ -186,35 +186,48 @@ class NotionService:
         if query:
             payload["query"] = query
         
-        resp = requests.post(url, json=payload, headers=self.headers)
-        resp.raise_for_status()
-        result = resp.json()
+        try:
+            resp = requests.post(url, json=payload, headers=self.headers)
+            resp.raise_for_status()
+            result = resp.json()
+        except requests.exceptions.RequestException as e:
+            print(f"[ERROR] Notion API request failed: {str(e)}")
+            if hasattr(e, 'response') and e.response is not None:
+                print(f"[ERROR] Response status: {e.response.status_code}")
+                print(f"[ERROR] Response body: {e.response.text[:500]}")
+            raise
         
         pages = []
         for item in result.get("results", []):
-            # 페이지 제목 추출
-            title = "Untitled"
-            
-            # Notion 페이지는 properties가 아니라 최상위에 title이 있을 수 있음
-            if "title" in item and isinstance(item["title"], list) and len(item["title"]) > 0:
-                # 페이지의 title 속성 (일반적인 경우)
-                if "plain_text" in item["title"][0]:
-                    title = item["title"][0]["plain_text"]
-            elif "properties" in item:
-                # 데이터베이스 아이템인 경우
-                props = item["properties"]
-                # title 타입의 속성 찾기
-                for prop_name, prop_value in props.items():
-                    if prop_value.get("type") == "title" and prop_value.get("title"):
-                        if len(prop_value["title"]) > 0 and "plain_text" in prop_value["title"][0]:
-                            title = prop_value["title"][0]["plain_text"]
-                            break
-            
-            pages.append({
-                "id": item["id"],
-                "title": title,
-                "url": item.get("url", "")
-            })
+            try:
+                # 페이지 제목 추출
+                title = "Untitled"
+                
+                # Notion 페이지는 properties가 아니라 최상위에 title이 있을 수 있음
+                if "title" in item and isinstance(item["title"], list) and len(item["title"]) > 0:
+                    # 페이지의 title 속성 (일반적인 경우)
+                    if "plain_text" in item["title"][0]:
+                        title = item["title"][0]["plain_text"]
+                elif "properties" in item:
+                    # 데이터베이스 아이템인 경우
+                    props = item["properties"]
+                    # title 타입의 속성 찾기
+                    for prop_name, prop_value in props.items():
+                        if prop_value.get("type") == "title" and prop_value.get("title"):
+                            if len(prop_value["title"]) > 0 and "plain_text" in prop_value["title"][0]:
+                                title = prop_value["title"][0]["plain_text"]
+                                break
+                
+                pages.append({
+                    "id": item["id"],
+                    "title": title,
+                    "url": item.get("url", "")
+                })
+            except Exception as e:
+                print(f"[ERROR] Failed to parse page item: {str(e)}")
+                print(f"[ERROR] Item: {item}")
+                # Skip this item and continue with others
+                continue
         
         # workspace 루트 옵션 추가 (parent 없이 생성하려면 최상위 페이지 중 하나를 찾아야 함)
         if include_workspace and pages:

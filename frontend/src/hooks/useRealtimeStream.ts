@@ -305,33 +305,39 @@ const useRealtimeStream = (): RealtimeStreamControls => {
                             setPartialText(message.text);
                             break;
 
-                        case 'final_transcript':
+                        case 'final_transcript': {
                             console.log("최종 전사:", message.text);
                             const now = new Date();
-                            const timeString = `${now.getHours().toString().padStart(2, '0')}시 ${now.getMinutes().toString().padStart(2, '0')}분`;
+                            const timeString = `${now.getHours().toString().padStart(2, '0')}시 ${now.getMinutes().toString().padStart(2, '0')}분 ${now.getSeconds().toString().padStart(2, '0')}초`;
+
+                            // message.text 안에서 [Speaker X] 패턴을 분리
+                            const match = message.text.match(/^\[Speaker (\d+)\]\s*(.*)$/);
+                            const speaker = match ? `Speaker ${match[1]}` : "Unknown";
+                            const cleanText = match ? match[2] : message.text;
 
                             const newSegment: TranscriptSegment = {
                                 id: Date.now().toString(),
                                 timestamp: timeString,
-                                speaker: "Speaker 1", // TODO: 백엔드에서 화자 정보가 오면 수정
-                                text: message.text,
+                                speaker,       // ← 파싱된 speaker 반영
+                                text: cleanText, // ← [Speaker X] 제거된 텍스트만 반영
                                 isFinal: true
                             };
 
                             setTranscript(prev => [...prev, newSegment]);
                             setPartialText('');
                             break;
+                        }
 
                         case 'translation':
                             console.log("번역 결과:", message.translated_text);
                             setTranslation(message.translated_text);
                             break;
-                            
+
                         case 'summary_generating':
                             console.log("요약 생성 시작:", message.sequence);
                             setIsGeneratingSummary(true);
                             break;
-                            
+
                         case 'timeline_summary':
                             console.log("타임라인 요약 수신:", message.sequence, message.time_window);
                             setTimelineSummaries(prev => [...prev, {
@@ -342,12 +348,12 @@ const useRealtimeStream = (): RealtimeStreamControls => {
                             }]);
                             setIsGeneratingSummary(false);
                             break;
-                            
+
                         case 'summary_error':
                             console.error("요약 생성 오류:", message.message);
                             setIsGeneratingSummary(false);
                             break;
-                            
+
                         case 'error':
                             console.error("Server Error:", message.message);
                             setPartialText(`[ERROR]: ${message.message}`);

@@ -3,6 +3,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List
 import os
+from datetime import datetime
 from backend.database import get_db
 from backend.schemas import meeting as meeting_schema
 from backend.crud import meeting as meeting_crud
@@ -347,6 +348,17 @@ async def end_meeting_and_process(
             # 액션 아이템 저장
             for item_data in result.get("action_items", []):
                 item_id = str(ulid.new())
+                
+                # 마감일 파싱
+                deadline_str = item_data.get("deadline")
+                due_dt = None
+                if deadline_str and deadline_str != "미정":
+                    try:
+                        # YYYY-MM-DD 형식 파싱
+                        due_dt = datetime.strptime(deadline_str, "%Y-%m-%d")
+                    except ValueError:
+                        pass
+
                 action_item = models.ActionItem(
                     ITEM_ID=item_id,
                     MEETING_ID=meeting_id,
@@ -354,7 +366,9 @@ async def end_meeting_and_process(
                     DESCRIPTION=item_data.get("task", ""),
                     STATUS="PENDING",
                     PRIORITY="MEDIUM",
-                    ASSIGNEE_ID=None
+                    ASSIGNEE_ID=None,
+                    ASSIGNEE_NAME=item_data.get("assignee"),
+                    DUE_DT=due_dt
                 )
                 db.add(action_item)
                 action_items.append({
