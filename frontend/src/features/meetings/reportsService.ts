@@ -399,7 +399,8 @@ export const getJiraProjects = async (): Promise<{
  */
 export const pushToJira = async (
   meetingId: string,
-  projectKey: string
+  projectKey: string,
+  itemIds?: string[]
 ): Promise<{
   message: string;
   project_key: string;
@@ -416,7 +417,10 @@ export const pushToJira = async (
   const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/action-items/to-jira`, 
     getFetchOptions({
       method: 'POST',
-      body: JSON.stringify({ project_key: projectKey }),
+      body: JSON.stringify({ 
+        project_key: projectKey,
+        item_ids: itemIds
+      }),
     })
   );
 

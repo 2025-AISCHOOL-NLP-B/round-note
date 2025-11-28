@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
 import ulid
+from datetime import datetime
 
 from backend.dependencies import get_db, get_current_user
 from backend import models
@@ -492,6 +493,16 @@ async def regenerate_summary(
         
         # 새 액션 아이템 생성
         for item_data in result["action_items"]:
+            # 마감일 파싱
+            deadline_str = item_data.get("deadline")
+            due_dt = None
+            if deadline_str and deadline_str != "미정":
+                try:
+                    # YYYY-MM-DD 형식 파싱
+                    due_dt = datetime.strptime(deadline_str, "%Y-%m-%d")
+                except ValueError:
+                    pass
+
             action_item = models.ActionItem(
                 ITEM_ID=str(ulid.new()),
                 MEETING_ID=meeting_id,
@@ -499,8 +510,9 @@ async def regenerate_summary(
                 DESCRIPTION=item_data.get("task", ""),  # task를 description으로도 사용
                 STATUS="PENDING",
                 PRIORITY="MEDIUM",
-                ASSIGNEE_ID=None,  # TODO: 담당자 매핑 필요
-                DUE_DT=None  # TODO: deadline 파싱 필요
+                ASSIGNEE_ID=None,
+                ASSIGNEE_NAME=item_data.get("assignee"),
+                DUE_DT=due_dt
             )
             db.add(action_item)
         
@@ -690,6 +702,7 @@ async def translate_meeting_content(
 class JiraSyncRequest(BaseModel):
     """Request body for Jira sync."""
     project_key: str
+    item_ids: Optional[List[str]] = None
 
 @router.post("/{meeting_id}/action-items/to-jira")
 async def push_action_items_to_jira(
@@ -705,6 +718,7 @@ async def push_action_items_to_jira(
     - 새 항목은 생성
     - priority, due_date 필드 매핑
     - 부분 실패 처리 (일부 성공 시에도 결과 반환)
+    - item_ids가 제공되면 해당 ID의 항목만 동기화
     """
     project_key = request.project_key
     from backend.core.auth.encryption import decrypt_data
@@ -746,14 +760,19 @@ async def push_action_items_to_jira(
     )
     
     # 액션 아이템 조회
-    action_items = db.query(models.ActionItem).filter(
+    query = db.query(models.ActionItem).filter(
         models.ActionItem.MEETING_ID == meeting_id
-    ).all()
+    )
+    
+    if request.item_ids:
+        query = query.filter(models.ActionItem.ITEM_ID.in_(request.item_ids))
+        
+    action_items = query.all()
     
     if not action_items:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No action items found for this meeting"
+            detail="No action items found for this meeting (or none matched the provided IDs)"
         )
     
     # 동기화 결과 추적

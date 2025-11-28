@@ -368,31 +368,71 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
     setIsAnalyzing(true);
     setAnalysisError('');
 
+    const maxRetries = 3;
+    let retryCount = 0;
+
+    const performAnalysis = async (): Promise<void> => {
+      try {
+        // 백엔드에 회의 내용 업데이트
+        await fetchWithAuth(`${API_URL}/api/v1/meetings/${currentMeetingId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ content }),
+        });
+
+        // regenerate를 호출하여 요약 + 액션 아이템 생성
+        const regenResponse = await fetchWithAuth(`${API_URL}/api/v1/reports/${currentMeetingId}/regenerate`, {
+          method: 'POST',
+        });
+
+        const result = await regenResponse.json();
+        setAiAnalysis({
+          summary: result.summary,
+          actionItems: result.action_items_count > 0 ? Array(result.action_items_count).fill({ task: '액션 아이템' }) : [],
+        });
+        toast.success('AI 분석이 완료되었습니다!');
+        console.log('AI Analysis result:', result);
+
+      } catch (error: any) {
+        console.error('AI analysis error:', error);
+
+        // 네트워크 오류 vs 인증 오류 구분
+        const isNetworkError = error?.message?.includes('Failed to fetch') || error?.name === 'TypeError';
+        const isTimeoutError = error?.name === 'AbortError';
+        const isAuthError = error?.message?.includes('인증');
+
+        // 인증 오류는 재시도하지 않음
+        if (isAuthError) {
+          setAnalysisError('인증이 필요합니다. 다시 로그인해주세요.');
+          toast.error('세션이 만료되었습니다. 다시 로그인해주세요.');
+          throw error;
+        }
+
+        // 네트워크 오류는 재시도
+        if ((isNetworkError || isTimeoutError) && retryCount < maxRetries) {
+          retryCount++;
+          console.log(`Retrying analysis (${retryCount}/${maxRetries})...`);
+          toast.info(`네트워크 오류. ${retryCount}번째 재시도 중... (${retryCount}/${maxRetries})`);
+          
+          // 지수 백오프: 1초, 2초, 4초
+          await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount - 1) * 1000));
+          return performAnalysis();
+        }
+
+        // 최대 재시도 횟수 초과 또는 다른 오류
+        const msg = isTimeoutError 
+          ? '분석 요청 시간이 초과되었습니다.' 
+          : (isNetworkError 
+            ? '네트워크 연결을 확인해주세요.'
+            : (error?.message || 'AI 분석 중 오류가 발생했습니다.'));
+        
+        setAnalysisError(msg);
+        toast.error(msg);
+        throw error;
+      }
+    };
+
     try {
-      // 백엔드에 회의 내용 업데이트
-      await fetchWithAuth(`${API_URL}/api/v1/meetings/${currentMeetingId}`, {
-        method: 'PUT',
-        body: JSON.stringify({ content }),
-      });
-
-      // regenerate를 호출하여 요약 + 액션 아이템 생성
-      const regenResponse = await fetchWithAuth(`${API_URL}/api/v1/reports/${currentMeetingId}/regenerate`, {
-        method: 'POST',
-      });
-
-      const result = await regenResponse.json();
-      setAiAnalysis({
-        summary: result.summary,
-        actionItems: result.action_items_count > 0 ? Array(result.action_items_count).fill({ task: '액션 아이템' }) : [],
-      });
-      toast.success('AI 분석이 완료되었습니다!');
-      console.log('AI Analysis result:', result);
-
-    } catch (error: any) {
-      console.error('AI analysis error:', error);
-      const msg = error?.name === 'AbortError' ? '분석 요청 시간이 초과되었습니다.' : (error?.message || 'AI 분석 중 네트워크 오류가 발생했습니다.');
-      setAnalysisError(msg);
-      toast.error(`${msg} 백엔드 연결을 확인해주세요.`);
+      await performAnalysis();
     } finally {
       setIsAnalyzing(false);
     }

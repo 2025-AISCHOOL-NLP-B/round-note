@@ -64,7 +64,18 @@ def register_user(user: user_schema.UserCreate, response: Response, db: Session 
         httponly=True,
         secure=is_production,
         samesite="lax",
-        max_age=1800  # 30분
+        max_age=7200  # 2시간
+    )
+    
+    # 리프레시 토큰도 발급
+    refresh_token = security.create_refresh_token({"sub": db_user.USER_ID, "email": db_user.EMAIL})
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=is_production,
+        samesite="lax",
+        max_age=604800  # 7일
     )
 
     # 응답 body에도 토큰 포함 (API 테스트 및 모바일 앱용)
@@ -117,7 +128,18 @@ def login_for_access_token(form_data: user_schema.UserLogin, response: Response,
         httponly=True,
         secure=is_production,  # 프로덕션에서만 HTTPS 강제, 개발환경에선 HTTP 허용
         samesite=samesite_value,  # 프로덕션에서는 "none"으로 크로스 도메인 허용
-        max_age=1800  # 30분 (초 단위)
+        max_age=7200  # 2시간
+    )
+    
+    # 리프레시 토큰도 발급
+    refresh_token = security.create_refresh_token({"sub": user.USER_ID, "email": user.EMAIL})
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=is_production,
+        samesite=samesite_value,
+        max_age=604800  # 7일
     )
 
     # 응답 body에도 토큰 포함 (API 테스트 및 모바일 앱용)
@@ -191,7 +213,18 @@ async def google_callback(request: Request, db: Session = Depends(get_db)):
             httponly=True,
             secure=is_production,  # 프로덕션에서만 HTTPS 강제
             samesite=samesite_value,  # 프로덕션에서는 "none"으로 크로스 도메인 허용
-            max_age=1800  # 30분 (초 단위)
+            max_age=7200  # 2시간
+        )
+        
+        # 리프레시 토큰도 발급
+        refresh_token = security.create_refresh_token({"sub": db_user.USER_ID, "email": db_user.EMAIL})
+        response.set_cookie(
+            key="refresh_token",
+            value=refresh_token,
+            httponly=True,
+            secure=is_production,
+            samesite=samesite_value,
+            max_age=604800  # 7일
         )
         
         print(f"[DEBUG] 쿠키 설정 완료 - samesite={samesite_value}, secure={is_production}")
@@ -222,6 +255,72 @@ def get_current_user_info(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="사용자를 찾을 수 없습니다.")
 
     return user
+
+# -------------------------------
+# 토큰 갱신
+# -------------------------------
+@router.post("/refresh")
+def refresh_access_token(request: Request, response: Response, db: Session = Depends(get_db)):
+    """
+    리프레시 토큰을 사용하여 새로운 액세스 토큰을 발급합니다.
+    세션 중간에 토큰이 만료된 경우 클라이언트가 호출하는 엔드포인트입니다.
+    """
+    refresh_token = request.cookies.get("refresh_token")
+    if not refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="리프레시 토큰이 없습니다. 다시 로그인해주세요."
+        )
+    
+    payload = security.verify_token(refresh_token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="유효하지 않은 리프레시 토큰입니다. 다시 로그인해주세요."
+        )
+    
+    # 리프레시 토큰인지 확인
+    token_type = payload.get("type")
+    if token_type != "refresh":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="잘못된 토큰 타입입니다."
+        )
+    
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="토큰에 사용자 정보가 없습니다.")
+    
+    user = user_crud.get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="사용자를 찾을 수 없습니다.")
+    
+    # 새로운 액세스 토큰 발급
+    new_access_token = security.create_access_token({"sub": user.USER_ID, "email": user.EMAIL})
+    
+    is_production = os.getenv("ENVIRONMENT", "development") == "production"
+    samesite_value = "none" if is_production else "lax"
+    
+    response.set_cookie(
+        key="access_token",
+        value=new_access_token,
+        httponly=True,
+        secure=is_production,
+        samesite=samesite_value,
+        max_age=7200  # 2시간
+    )
+    
+    logger.info("Token refreshed successfully", extra={
+        "user_id": user.USER_ID,
+        "email": user.EMAIL,
+        "action": "refresh_token"
+    })
+    
+    return {
+        "message": "토큰이 갱신되었습니다.",
+        "access_token": new_access_token,
+        "token_type": "bearer"
+    }
 
 # -------------------------------
 # 로그아웃
