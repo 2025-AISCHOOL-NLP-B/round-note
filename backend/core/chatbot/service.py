@@ -18,6 +18,10 @@ from backend.schemas.chatbot import (
     MeetingContext,
 )
 from backend.core.llm.rag.retriever import RAGRetriever
+from backend.core.chatbot.conversation_helpers import (
+    should_skip_llm,
+    enhance_answer,
+)
 
 
 class ChatbotService:
@@ -245,10 +249,22 @@ class ChatbotService:
         """
         from datetime import datetime
         logger = logging.getLogger(__name__)
-        
+
         logger.info(f"풀텍스트 챗봇 처리 시작 - 회의 ID: {payload.meeting_ids}")
 
-        # 1) 회의 조회
+        # ========== 1) 인사말/일상 대화 감지 (LLM 호출 없이 처리) ==========
+        skip_llm, direct_response = should_skip_llm(payload.question)
+
+        if skip_llm:
+            logger.info(f"LLM 스킵 - 직접 응답: {direct_response[:50]}...")
+            return FullTextChatbotResponse(
+                question=payload.question,
+                answer=direct_response,
+                used_meetings=[],
+                created_at=datetime.now(),
+            )
+
+        # ========== 2) 회의 조회 ==========
         meetings = (
             db.query(models.Meeting)
             .filter(models.Meeting.MEETING_ID.in_(payload.meeting_ids))
@@ -259,7 +275,7 @@ class ChatbotService:
             logger.warning("유효한 회의를 찾을 수 없습니다.")
             raise ValueError("유효한 회의를 찾을 수 없습니다.")
 
-        # 2) 회의별 컨텍스트 구성
+        # ========== 3) 회의별 컨텍스트 구성 ==========
         meeting_contexts = []
         full_context_parts = []
 
@@ -292,17 +308,24 @@ class ChatbotService:
                 )
             )
 
-        # 3) 전체 컨텍스트 통합
+        # ========== 4) 전체 컨텍스트 통합 ==========
         combined_context = "\n\n".join(full_context_parts)
 
-        # 4) System/User 프롬프트 구성
-        system_prompt = (
-            "당신은 회의 내용을 분석하고 질문에 답변하는 한국어 AI 비서입니다.\n"
-            "제공된 회의 전사 원문에 근거해서만 답변하고, "
-            "원문에 없는 내용은 '제공된 회의에서 언급되지 않았습니다'라고 명확히 말하세요.\n"
-            "여러 회의가 제공된 경우, 각 회의를 회의 제목으로 구분하여 답변하거나 종합하여 설명하세요.\n"
-            "답변은 핵심 위주로 간결하게 작성하세요."
-        )
+        # ========== 5) System/User 프롬프트 구성 (유연한 톤) ==========
+        system_prompt = """당신은 회의 내용을 분석하고 질문에 답변하는 친근하고 유연한 한국어 AI 비서입니다.
+
+[답변 규칙]
+1. 제공된 회의 전사 원문에 근거해서만 답변하세요
+2. 원문에 없는 내용은 "해당 회의에서 언급되지 않았습니다" + 도움될 만한 제안 추가
+3. 여러 회의가 제공된 경우, 각 회의를 구분하거나 종합하여 설명
+4. 답변은 핵심 위주로 간결하게 (2-3문장 권장)
+5. 자연스럽고 친근한 톤 유지
+6. 불필요한 반복 피하기 (매번 같은 인사말 반복 금지)
+
+[톤 가이드]
+- 정보가 있을 때: 자연스럽게 답변 ("네, ~입니다", "~로 결정되었습니다")
+- 정보가 없을 때: 친절하게 대안 제시
+- 항상 간결하고 명확하게"""
 
         user_prompt = (
             f"{combined_context}\n\n"
@@ -310,15 +333,18 @@ class ChatbotService:
             "위 회의 내용만을 근거로, 한국어로 자연스럽게 답변하세요."
         )
 
-        # 5) LLM 호출
+        # ========== 6) LLM 호출 ==========
         logger.info("LLM 호출 시작")
         answer_text = self._invoke_llm(system_prompt, user_prompt)
         logger.info(f"LLM 호출 완료 - 답변 길이: {len(answer_text)}")
 
-        # 6) 응답 생성
+        # ========== 7) 답변 패턴 다양화 ==========
+        enhanced_answer = enhance_answer(answer_text, payload.question)
+
+        # ========== 8) 응답 생성 ==========
         response = FullTextChatbotResponse(
             question=payload.question,
-            answer=answer_text,
+            answer=enhanced_answer,
             used_meetings=meeting_contexts,
             created_at=datetime.now(),
         )
