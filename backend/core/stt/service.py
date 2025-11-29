@@ -32,7 +32,7 @@ class STTService:
             "&sample_rate=16000" # Audio sample rate (matches microphone)
             "&smart_format=true" # Smart formatting (dates, times, etc.)
             "&multichannel=true" # Enable multichannel
-            # "&channel=1"        # Single channel audio
+            # "&channels=2"      # Dynamic configuration via method argument
             # "&endpointer=true" # Voice activity detection
         )
         
@@ -46,20 +46,24 @@ class STTService:
         # TODO: (Team Member B) Initialize ElevenLabs client (for batch STT)
     
     @api_retry_stt
-    def get_realtime_stt_url(self) -> tuple[str, dict]:
+    def get_realtime_stt_url(self, channels: int = 1) -> tuple[str, dict]:
         """
         Returns the URL and headers required for FastAPI to connect to the Deepgram WebSocket.
         
         Auto-retry: Retries up to 3 times on network errors.
         """
-        logger.debug("Generating Deepgram WebSocket URL", extra={"service": "stt"})
+        logger.debug(f"Generating Deepgram WebSocket URL (Channels: {channels})", extra={"service": "stt"})
             
-        full_url = self.DEEPGRAM_BASE_URL + self.DEEPGRAM_PARAMS
+        # 동적으로 채널 수 설정
+        params = self.DEEPGRAM_PARAMS + f"&channels={channels}"
+        
+        full_url = self.DEEPGRAM_BASE_URL + params
         headers = {"Authorization": f"Token {self.DEEPGRAM_API_KEY}"}
         
         logger.debug("WebSocket URL generated", extra={
             "service": "stt",
-            "url": self.DEEPGRAM_BASE_URL  # Don't log full URL with params for security
+            "url": self.DEEPGRAM_BASE_URL,
+            "channels": channels
         })
         
         return full_url, headers
