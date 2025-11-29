@@ -83,3 +83,4 @@ docker-compose.override.yml
 .claude/
 
 AUTH_SESSION_MANAGEMENT_GUIDE.md
+MULTICHANNEL_DIAGNOSIS_SUMMARY.md
