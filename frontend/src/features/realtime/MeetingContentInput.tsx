@@ -29,7 +29,9 @@ import {
   PauseCircle,
   PlayCircle,
   StopCircle,
-  User
+  User,
+  Monitor,
+  MonitorOff
 } from 'lucide-react';
 // Supabase support is optional and disabled by default.
 const ENABLE_SUPABASE = String(process.env.NEXT_PUBLIC_ENABLE_SUPABASE || 'false').toLowerCase() === 'true';
@@ -92,6 +94,9 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
     pauseRecording,
     resumeRecording,
     vadLoading,
+    startSystemAudio,
+    stopSystemAudio,
+    isSystemAudioShared,
   } = useRealtimeStream();
 
   const [content, setContent] = useState('');
@@ -691,6 +696,26 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
                     )}
                   </Button>
                 )}
+
+                <Button
+                  onClick={isSystemAudioShared ? stopSystemAudio : startSystemAudio}
+                  size="lg"
+                  variant={isSystemAudioShared ? "secondary" : "outline"}
+                  className="gap-2"
+                  title="시스템 오디오(화상회의 소리) 공유"
+                >
+                  {isSystemAudioShared ? (
+                    <>
+                      <MonitorOff className="w-5 h-5" />
+                      <span className="hidden sm:inline">시스템 소리 끄기</span>
+                    </>
+                  ) : (
+                    <>
+                      <Monitor className="w-5 h-5" />
+                      <span className="hidden sm:inline">시스템 소리 공유</span>
+                    </>
+                  )}
+                </Button>
               </div>
 
               {/* 전사 내용 표시 영역 - 타임라인 스타일 */}
@@ -820,6 +845,26 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
                     )}
                   </Button>
                 )}
+
+                <Button
+                  onClick={isSystemAudioShared ? stopSystemAudio : startSystemAudio}
+                  size="lg"
+                  variant={isSystemAudioShared ? "secondary" : "outline"}
+                  className="gap-2"
+                  title="시스템 오디오(화상회의 소리) 공유"
+                >
+                  {isSystemAudioShared ? (
+                    <>
+                      <MonitorOff className="w-5 h-5" />
+                      <span className="hidden sm:inline">시스템 소리 끄기</span>
+                    </>
+                  ) : (
+                    <>
+                      <Monitor className="w-5 h-5" />
+                      <span className="hidden sm:inline">시스템 소리 공유</span>
+                    </>
+                  )}
+                </Button>
               </div>
 
               {/* 요약 내용 표시 영역 - 고정 높이 + 스크롤 */}

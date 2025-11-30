@@ -404,8 +404,9 @@ export const pushToJira = async (
 ): Promise<{
   message: string;
   project_key: string;
-  created: Array<{ item_id: string; issue_key: string; action: string }>;
-  updated: Array<{ item_id: string; issue_key: string; action: string }>;
+  jira_base_url: string;
+  created: Array<{ item_id: string; issue_key: string; issue_url: string; action: string }>;
+  updated: Array<{ item_id: string; issue_key: string; issue_url: string; action: string }>;
   failed: Array<{ item_id: string; title: string; error: string }>;
   summary: {
     total: number;
