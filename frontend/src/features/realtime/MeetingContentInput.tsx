@@ -80,6 +80,9 @@ interface MeetingContentInputProps {
   meetings: Meeting[];
 }
 
+
+
+
 export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings }: MeetingContentInputProps) {
   // useRealtimeStream hook 사용
   const {
@@ -122,6 +125,34 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
   const summaryIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
+
+
+  // 실시간 액션아이템 추출 핸들러
+  const handleRealtimeActionExtract = async (): Promise<void> => {
+    setIsAnalyzing(true);
+    try {
+      if (!currentMeetingId) {
+        throw new Error("회의 ID가 없습니다. 회의를 먼저 시작하세요.");
+      }
+
+      const response = await fetchWithAuth(
+        `${API_URL}/api/v1/reports/${currentMeetingId}/actions/realtime`, // ✅ API_URL 붙여서 백엔드로 직접 요청
+        { method: "POST" }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Request failed with status ${response.status}`);
+      }
+
+      const data = await response.json();
+      setAiAnalysis(data); // { action_items: [...] }
+    } catch (error: any) {
+      console.error("실시간 액션아이템 추출 실패:", error);
+      setAnalysisError(error.message || "실시간 액션아이템 추출 중 오류 발생");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
 
   // Audio recording states
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
@@ -384,20 +415,24 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
           method: 'PUT',
           body: JSON.stringify({ content }),
         });
-
         // regenerate를 호출하여 요약 + 액션 아이템 생성
+        // ✅ 수정된 부분: body에 content를 담아서 보냅니다.
         const regenResponse = await fetchWithAuth(`${API_URL}/api/v1/reports/${currentMeetingId}/regenerate`, {
           method: 'POST',
+          body: JSON.stringify({ content }),
         });
-
         const result = await regenResponse.json();
+        const actionItemCount = result.action_items_count || 0;
         setAiAnalysis({
           summary: result.summary,
-          actionItems: result.action_items_count > 0 ? Array(result.action_items_count).fill({ task: '액션 아이템' }) : [],
+          actionItems: actionItemCount > 0 ? Array(actionItemCount).fill({ task: '액션 아이템' }) : [],
         });
-        toast.success('AI 분석이 완료되었습니다!');
+        if (actionItemCount === 0) {
+          toast.info('현재 생성된 액션아이템을 찾지 못했습니다.'); // ℹ️ 파란색 알림
+        } else {
+          toast.success(`AI 분석 완료! 액션 아이템 ${actionItemCount}개를 찾았습니다.`); // ✅ 초록색 알림
+        }
         console.log('AI Analysis result:', result);
-
       } catch (error: any) {
         console.error('AI analysis error:', error);
 
@@ -729,7 +764,7 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
                             <User className="w-4 h-4" />
                           </div>
                         </div>
-                        <div className="flex-1 space-y-1">
+                        <div className="inline-block max-w-[80%] space-y-1">
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-semibold text-slate-700">{segment.speaker}</span>
                             <span className="text-xs text-slate-400">{segment.timestamp}</span>
@@ -749,7 +784,7 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
                             <User className="w-4 h-4" />
                           </div>
                         </div>
-                        <div className="flex-1 space-y-1">
+                        <div className="inline-block max-w-[80%] space-y-1">
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-semibold text-slate-500">Speaker ...</span>
                             <span className="text-xs text-slate-400">입력 중...</span>
@@ -875,7 +910,7 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
                       <div key={index} className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4 border border-blue-200">
                         <div className="flex items-start gap-2 mb-2">
                           <Brain className="w-5 h-5 text-primary shrink-0 mt-0.5" />
-                          <div className="flex-1">
+                          <div className="max-w-[80%] inline-block">
                             <div className="flex items-center gap-2 mb-2">
                               <h4 className="font-semibold text-slate-800">
                                 {summary.sequence}차 요약
@@ -941,20 +976,22 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
         </Alert>
       )}
 
-      {/* 액션 아이템 생성 */}
-      {content && !aiAnalysis && (
+      {/* 실시간 액션 아이템 생성 */}
+      {!aiAnalysis && (
         <Card className="mb-4 border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50">
           <CardContent className="p-4">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
               <div className="flex items-start gap-2">
                 <CheckSquare className="w-5 h-5 text-primary shrink-0 mt-0.5" />
                 <div>
-                  <p className="text-sm font-medium text-slate-800">액션 아이템 생성</p>
-                  <p className="text-xs text-slate-600">회의 내용에서 실행 항목을 추출합니다</p>
+                  <p className="text-sm font-medium text-slate-800">실시간 액션 아이템 생성</p>
+                  <p className="text-xs text-slate-600">
+                    회의 중 전사 내용을 기반으로 즉시 추출합니다 (DB 저장 없음)
+                  </p>
                 </div>
               </div>
               <Button
-                onClick={handleAIAnalysis}
+                onClick={handleRealtimeActionExtract}   // 새 핸들러 연결
                 disabled={isAnalyzing}
                 className="gap-2 shrink-0 w-full sm:w-auto bg-primary hover:bg-primary/90"
                 size="sm"
@@ -967,7 +1004,7 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4" />
-                    액션 아이템 생성
+                    실시간 액션 아이템 생성
                   </>
                 )}
               </Button>
@@ -986,21 +1023,21 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
-            {aiAnalysis.summary && (
-              <div>
-                <h4 className="font-semibold text-green-800 mb-1">요약</h4>
-                <p className="text-green-700 text-sm whitespace-pre-wrap">{aiAnalysis.summary}</p>
-              </div>
-            )}
-            {aiAnalysis.actionItems && aiAnalysis.actionItems.length > 0 && (
+            {aiAnalysis.actionItems && aiAnalysis.actionItems.length > 0 ? (
               <div>
                 <h4 className="font-semibold text-green-800 mb-1">액션 아이템</h4>
                 <ul className="list-disc list-inside text-green-700 text-sm">
                   {aiAnalysis.actionItems.map((item: any, i: number) => (
-                    <li key={i}>{typeof item === 'string' ? item : (item.task || item.title || item.text || '')}</li>
+                    <li key={i}>
+                      {typeof item === 'string'
+                        ? item
+                        : (item.task || item.title || item.text || '')}
+                    </li>
                   ))}
                 </ul>
               </div>
+            ) : (
+              <p className="text-green-700 text-sm">현재 생성된 액션아이템이 없습니다.</p>
             )}
           </CardContent>
         </Card>
