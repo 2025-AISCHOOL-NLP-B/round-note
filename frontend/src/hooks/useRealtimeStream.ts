@@ -58,7 +58,7 @@ interface RealtimeStreamControls {
     translation: string;
     timelineSummaries: TimelineSummary[];
     isGeneratingSummary: boolean;
-    startRecording: () => Promise<void>;
+    startRecording: (meetingId?: string) => Promise<void>;
     stopRecording: () => void;
     pauseRecording: () => void;
     resumeRecording: () => void;
@@ -210,6 +210,25 @@ const useRealtimeStream = (): RealtimeStreamControls => {
                 if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                     // event.data is ArrayBuffer (Int16)
                     // console.log(`Sending audio chunk: ${event.data.byteLength} bytes`); // Debug
+
+                    // [Debug] 가끔씩 데이터 내용 확인
+                    if (Math.random() < 0.01) {
+                        const int16Data = new Int16Array(event.data);
+                        let hasRightSignal = false;
+                        // Check every 2nd sample (Right channel)
+                        for (let i = 1; i < int16Data.length; i += 2) {
+                            if (int16Data[i] !== 0) {
+                                hasRightSignal = true;
+                                break;
+                            }
+                        }
+                        if (hasRightSignal) {
+                            console.log(`[Frontend] Sending Chunk with System Audio Signal 🔊`);
+                        } else {
+                            // console.log(`[Frontend] Sending Chunk - Right Channel Silent 🔇`);
+                        }
+                    }
+
                     wsRef.current.send(event.data);
                     lastStereoMessageTimeRef.current = Date.now(); // 마지막 전송 시간 갱신
                 } else {
@@ -256,6 +275,12 @@ const useRealtimeStream = (): RealtimeStreamControls => {
             // 만약 녹음 중이라면 즉시 오디오 그래프에 연결해야 함
             if (isRecordingRef.current) {
                 if (audioContextRef.current && mergerNodeRef.current) {
+                    // [Fix] AudioContext 상태 확인 및 재개
+                    if (audioContextRef.current.state === 'suspended') {
+                        await audioContextRef.current.resume();
+                        console.log("[SystemAudio] AudioContext resumed for system audio connection");
+                    }
+
                     // 이미 그래프가 있으면 연결
                     const systemSource = audioContextRef.current.createMediaStreamSource(stream);
                     systemSourceRef.current = systemSource;
@@ -482,7 +507,7 @@ const useRealtimeStream = (): RealtimeStreamControls => {
     }, [vadPause]);
 
     // 녹음 시작
-    const startRecording = useCallback(async () => {
+    const startRecording = useCallback(async (meetingId?: string) => {
         if (vadLoading) {
             console.log("VAD 로딩 중...");
             return;
@@ -495,8 +520,12 @@ const useRealtimeStream = (): RealtimeStreamControls => {
             const channels = isSystemAudioShared ? 2 : 1;
             currentChannelsRef.current = channels;
 
-            const wsUrl = WS_URL + `?translate=true&summary=true&channels=${channels}`;
-            console.log(`WebSocket 연결 시도 (Channels: ${channels}):`, wsUrl);
+            let wsUrl = WS_URL + `?translate=true&summary=true&channels=${channels}`;
+            if (meetingId) {
+                wsUrl += `&meetingId=${meetingId}`;
+            }
+
+            console.log(`WebSocket 연결 시도 (Channels: ${channels}, MeetingID: ${meetingId}):`, wsUrl);
             console.log("환경변수 API_URL:", process.env.NEXT_PUBLIC_API_URL);
 
             const ws = new WebSocket(wsUrl);
