@@ -54,6 +54,13 @@ __pycache__/
 
 # 권현재 테스트
 /backend/tests
+/backend/check_embeddings.py
+/backend/test_adversarial_intelligence.py
+/backend/test_chatbot_performance.py
+/backend/test_embedding_auto_generation.py
+/backend/test_rag_chatbot.py
+/backend/create_test_meetings_for_adversarial.py
+/backend/generate_embeddings_for_existing_meetings.py
 
 ###################################################
 # 3. Environment and Data

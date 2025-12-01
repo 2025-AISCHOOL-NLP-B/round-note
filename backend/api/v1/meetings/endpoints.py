@@ -382,12 +382,55 @@ async def end_meeting_and_process(
                 })
             
             db.commit()
-            
+
         except Exception as e:
             db.rollback()
             print(f"LLM 처리 오류: {e}")
             # LLM 처리 실패해도 회의 종료는 성공으로 간주
-    
+
+    # ==================== 임베딩 생성 (RAG 검색을 위해) ====================
+    # 회의 전사 내용이 있으면 벡터 임베딩 생성
+    if ended_meeting.CONTENT:
+        try:
+            from backend.core.llm.rag.vectorstore import VectorStore
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.info(f"회의 '{meeting_id}' 임베딩 생성 시작...")
+
+            # 회의 내용을 청크로 분할
+            lines = ended_meeting.CONTENT.split('\n')
+            chunks = []
+            current_chunk = []
+
+            for line in lines:
+                line = line.strip()
+                if line:
+                    current_chunk.append(line)
+                    if len(current_chunk) >= 3:  # 3줄씩 청크 생성
+                        chunks.append(' '.join(current_chunk))
+                        current_chunk = []
+
+            # 남은 청크 추가
+            if current_chunk:
+                chunks.append(' '.join(current_chunk))
+
+            # 벡터 스토어에 저장
+            if chunks:
+                vectorstore = VectorStore(db)
+                vectorstore.add_texts(meeting_id, chunks)
+                db.commit()
+                logger.info(f"회의 '{meeting_id}' 임베딩 생성 완료: {len(chunks)}개 청크")
+            else:
+                logger.warning(f"회의 '{meeting_id}' 청크 생성 실패: 내용이 비어있음")
+
+        except Exception as e:
+            db.rollback()
+            print(f"임베딩 생성 오류: {e}")
+            # 임베딩 생성 실패해도 회의 종료는 성공으로 간주
+            import traceback
+            traceback.print_exc()
+
     return {
         "message": f"회의가 종료되었습니다. (meeting_id: {meeting_id})",
         "meeting_id": meeting_id,

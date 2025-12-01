@@ -33,7 +33,7 @@ def register_user(user: user_schema.UserCreate, response: Response, db: Session 
     """새로운 사용자를 등록하고 자동으로 로그인 토큰을 발급합니다."""
     logger.info("User registration attempt", extra={
         "email": user.email,
-        "name": user.name,
+        "user_name": user.name,
         "action": "register"
     })
 

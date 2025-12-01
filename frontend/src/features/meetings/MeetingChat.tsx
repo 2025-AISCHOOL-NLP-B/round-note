@@ -135,13 +135,27 @@ export default function MeetingChat({ meeting, open, onOpen, onClose }: { meetin
       const token = getAuthToken();
       // support different meeting id field names (meeting_id vs id)
       const meetingId = (meeting as any)?.meeting_id || (meeting as any)?.id || null;
-      const res = await fetch(`${API_URL}/api/v1/chatbot/ask`, {
+
+      // Build conversation history from recent messages (최근 5개 쌍, 즉 10개 메시지)
+      const conversationHistory = messages
+        .filter(m => m.sender === 'user' || m.sender === 'bot')
+        .slice(-10)
+        .map(m => ({
+          role: m.sender === 'user' ? 'user' : 'assistant',
+          content: m.text
+        }));
+
+      const res = await fetch(`${API_URL}/api/v1/chatbot/ask-fulltext`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ meeting_id: meetingId, question, use_rag: true }),
+        body: JSON.stringify({
+          meeting_ids: [meetingId],
+          question,
+          conversation_history: conversationHistory.length > 0 ? conversationHistory : undefined
+        }),
       });
 
       if (!res.ok) {

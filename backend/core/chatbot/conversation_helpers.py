@@ -21,6 +21,9 @@ class QuestionType(Enum):
     OFF_TOPIC = "off_topic"  # 회의와 무관한 질문
     MEETING_RELATED = "meeting_related"  # 회의 관련 질문
     UNCLEAR = "unclear"  # 불분명한 질문
+    SUMMARY_REQUEST = "summary_request"  # 요약 요청
+    ACTION_LIST_REQUEST = "action_list_request"  # 액션 아이템 조회
+    ROLE_ASSIGNMENT_REQUEST = "role_assignment_request"  # 담당 업무 조회
 
 
 class ConversationClassifier:
@@ -47,6 +50,21 @@ class ConversationClassifier:
         "승인", "검토", "계획", "전략", "목표", "성과"
     ]
 
+    # 요약 요청 패턴
+    SUMMARY_PATTERNS = [
+        "요약", "정리", "개요", "핵심", "summary"
+    ]
+
+    # 액션 아이템 요청 패턴
+    ACTION_PATTERNS = [
+        "해야", "할일", "todo", "task", "업무", "과제"
+    ]
+
+    # 담당자/역할 요청 패턴
+    ROLE_PATTERNS = [
+        "맡은", "담당", "역할", "책임", "누가"
+    ]
+
     @classmethod
     def classify_question(cls, question: str) -> Tuple[QuestionType, Optional[str]]:
         """
@@ -60,25 +78,45 @@ class ConversationClassifier:
         """
         question_lower = question.lower().strip()
 
-        # 1. 인사말 감지
+        # 0. 한글 자음/모음만 있는 경우 먼저 체크 (ㅇ, ㅁ, ㅂ, ㅅ 등)
+        if all(ord(char) in range(0x3131, 0x3164) for char in question if char.strip()):
+            return QuestionType.UNCLEAR, None
+
+        # 1. 인사말 감지 (길이 체크보다 먼저)
         if any(greeting in question_lower for greeting in cls.GREETING_PATTERNS):
             if len(question) < 10:  # 짧은 인사말
                 return QuestionType.GREETING, None
 
-        # 2. 일상 대화 감지
+        # 2. 너무 짧은 질문 (2자 이하)
+        if len(question) <= 2:
+            return QuestionType.UNCLEAR, None
+
+        # 3. 일상 대화 감지
         for category, patterns in cls.SMALL_TALK_PATTERNS.items():
             if any(pattern in question_lower for pattern in patterns):
                 return QuestionType.SMALL_TALK, category
 
-        # 3. 회의 관련 질문 감지
+        # 4. 요약 요청 감지
+        if any(pattern in question_lower for pattern in cls.SUMMARY_PATTERNS):
+            return QuestionType.SUMMARY_REQUEST, None
+
+        # 5. 액션 아이템 요청 감지
+        if any(pattern in question_lower for pattern in cls.ACTION_PATTERNS):
+            return QuestionType.ACTION_LIST_REQUEST, None
+
+        # 6. 담당자/역할 요청 감지
+        if any(pattern in question_lower for pattern in cls.ROLE_PATTERNS):
+            return QuestionType.ROLE_ASSIGNMENT_REQUEST, None
+
+        # 7. 회의 관련 질문 감지
         if any(keyword in question_lower for keyword in cls.MEETING_KEYWORDS):
             return QuestionType.MEETING_RELATED, None
 
-        # 4. 불분명한 질문 (너무 짧거나 의문사만)
+        # 8. 불분명한 질문 (너무 짧거나 의문사만)
         if len(question) < 5:
             return QuestionType.UNCLEAR, None
 
-        # 5. 그 외는 회의 무관 질문으로 간주
+        # 9. 그 외는 회의 무관 질문으로 간주
         return QuestionType.OFF_TOPIC, None
 
 
@@ -104,6 +142,13 @@ class ResponseGenerator:
         "죄송하지만, 저는 회의 내용에 대해서만 답변드릴 수 있어요. 회의 관련 질문이 있으시면 말씀해주세요!",
         "그 질문은 회의 내용과는 관련이 없는 것 같아요. 회의에 대해 궁금하신 점을 물어보시면 도와드리겠습니다.",
         "제가 도울 수 있는 건 회의 내용 관련 질문이에요. 예산, 일정, 담당자 등에 대해 궁금하신 점이 있으신가요?",
+    ]
+
+    # 불분명한 질문 응답 템플릿
+    UNCLEAR_RESPONSES = [
+        "질문을 좀 더 구체적으로 말씀해주시겠어요? 회의 내용 중 궁금하신 점을 자세히 물어보시면 도와드리겠습니다.",
+        "질문 내용이 명확하지 않아요. 예를 들어 '이번 회의 요약해줘', '맡은 역할이 뭐야?' 같이 구체적으로 물어보시면 답변해드릴 수 있어요!",
+        "무엇이 궁금하신지 조금 더 자세히 말씀해주시겠어요? 회의 요약, 액션 아이템, 참석자 등 구체적으로 물어보세요.",
     ]
 
     # 감사 응답 템플릿
@@ -154,6 +199,11 @@ class ResponseGenerator:
     def generate_off_topic_response(cls) -> str:
         """회의 무관 질문 응답 생성"""
         return random.choice(cls.OFF_TOPIC_RESPONSES)
+
+    @classmethod
+    def generate_unclear_response(cls) -> str:
+        """불분명한 질문 응답 생성"""
+        return random.choice(cls.UNCLEAR_RESPONSES)
 
     @classmethod
     def _extract_name(cls, text: str) -> Optional[str]:
@@ -274,11 +324,15 @@ def should_skip_llm(question: str) -> Tuple[bool, Optional[str]]:
     if question_type == QuestionType.SMALL_TALK:
         return True, ResponseGenerator.generate_small_talk_response(category, question)
 
+    # 불분명한 질문 (우선순위 상향 - LLM 호출 불필요)
+    if question_type == QuestionType.UNCLEAR:
+        return True, ResponseGenerator.generate_unclear_response()
+
     # 회의 무관 질문
     if question_type == QuestionType.OFF_TOPIC:
         return True, ResponseGenerator.generate_off_topic_response()
 
-    # 회의 관련 질문이나 불분명한 질문은 LLM 호출 필요
+    # 회의 관련 질문은 LLM 호출 필요
     return False, None
 
 
@@ -297,3 +351,44 @@ def enhance_answer(answer: str, question: str, apply_variation: bool = True) -> 
     if apply_variation:
         return AnswerPatternVariator.variate_answer(answer, question)
     return answer
+
+
+def reinterpret_question(question: str) -> str:
+    """
+    질문 재해석: 사용자 의도를 파악하여 LLM이 이해하기 쉬운 힌트 추가
+
+    Args:
+        question: 사용자 원본 질문
+
+    Returns:
+        재해석된 질문 (힌트 추가)
+
+    Examples:
+        - "맡은 역할이 뭐야?" → "맡은 역할이 뭐야? (내가 담당한 액션 아이템을 알려줘)"
+        - "해야 될 일 있어?" → "해야 될 일 있어? (액션 아이템 목록을 확인해줘)"
+        - "요약해줘" → "요약해줘 (회의 전체 내용을 요약해줘)"
+    """
+    question_type, _ = ConversationClassifier.classify_question(question)
+    question_lower = question.lower().strip()
+
+    # 1. 담당자/역할 요청
+    if question_type == QuestionType.ROLE_ASSIGNMENT_REQUEST:
+        if "맡은" in question_lower or "역할" in question_lower:
+            return question + " (내가 담당한 액션 아이템을 알려줘)"
+        elif "담당" in question_lower:
+            return question + " (담당자별 액션 아이템을 알려줘)"
+
+    # 2. 액션 아이템 요청
+    elif question_type == QuestionType.ACTION_LIST_REQUEST:
+        if "해야" in question_lower or "할일" in question_lower:
+            return question + " (액션 아이템 목록을 확인해줘)"
+        elif "업무" in question_lower or "과제" in question_lower:
+            return question + " (진행 중인 액션 아이템을 알려줘)"
+
+    # 3. 요약 요청
+    elif question_type == QuestionType.SUMMARY_REQUEST:
+        if len(question) < 15:  # 짧은 요약 요청
+            return question + " (회의 전체 내용을 요약해줘)"
+
+    # 그 외는 원본 그대로 반환
+    return question
