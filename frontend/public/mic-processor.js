@@ -1,7 +1,7 @@
 class MicProcessor extends AudioWorkletProcessor {
     constructor() {
         super();
-        console.log("[MicProcessor] Initialized (no downsampling - using native AudioContext rate)");
+        // 포트(Port)를 통해 메인 스레드(React Hook)와 통신합니다.
     }
     
     // AudioWorklet의 핵심 함수: 오디오 버퍼가 도착할 때마다 호출됨

@@ -5,14 +5,13 @@ class StereoProcessor extends AudioWorkletProcessor {
         this.energyDebugEnabled = false;
         this.frameCounter = 0;
         this.alwaysSendMic = false; // 기본값: 게이팅 적용
-        this.systemAudioActive = false; // 시스템 오디오 공유 여부
         
         // 버퍼링 설정
-        this.BUFFER_SIZE = 4096; // 약 256ms @ 16kHz
+        this.BUFFER_SIZE = 4096; // 약 85ms @ 48kHz
         this.buffer = new Int16Array(this.BUFFER_SIZE * 2); // Stereo
         this.bufferIndex = 0;
         
-        console.log("[StereoProcessor] Initialized (no downsampling - using native AudioContext rate). BufferSize:", this.BUFFER_SIZE);
+        console.log("[StereoProcessor] Initialized. Ready to process. BufferSize:", this.BUFFER_SIZE);
         
         this.port.onmessage = (event) => {
             if (event.data.type === 'setMicEnabled') {
@@ -23,9 +22,6 @@ class StereoProcessor extends AudioWorkletProcessor {
             } else if (event.data.type === 'setAlwaysSendMic') {
                 this.alwaysSendMic = !!event.data.value;
                 console.log('[StereoProcessor] alwaysSendMic set to', this.alwaysSendMic);
-            } else if (event.data.type === 'setSystemAudioActive') {
-                this.systemAudioActive = !!event.data.value;
-                console.log('[StereoProcessor] systemAudioActive set to', this.systemAudioActive);
             }
         };
     }
@@ -73,9 +69,9 @@ class StereoProcessor extends AudioWorkletProcessor {
             let micRaw = left ? left[i] : 0;
             let micSample = (this.micEnabled || this.alwaysSendMic) ? micRaw : 0;
             
-            // 시스템 채널 (Right) - 시스템 오디오 활성화 시에만 데이터 전송
-            // 비활성화 시 강제 무음 (ChannelMerger가 이상한 데이터를 생성하는 것을 방지)
-            let sysSample = (this.systemAudioActive && right) ? right[i] : 0;
+            // 시스템 채널 (Right) - 게이팅 없이 항상 통과
+            // right가 없으면 0 (무음)
+            let sysSample = right ? right[i] : 0;
 
             // Float32 -> Int16 변환
             micSample = Math.max(-1, Math.min(1, micSample));
