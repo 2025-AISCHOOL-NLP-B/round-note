@@ -523,6 +523,7 @@ const useRealtimeStream = (): RealtimeStreamControls => {
             if (meetingId) {
                 wsUrl += `&meetingId=${meetingId}`;
             }
+            
             console.log(`WebSocket 연결 시도 (Channels: ${channels}, MeetingID: ${meetingId}):`, wsUrl);
             console.log("환경변수 API_URL:", process.env.NEXT_PUBLIC_API_URL);
 
