@@ -584,3 +584,68 @@ export const exportActionItemsToNotion = async (
 
   return response.json();
 };
+
+// ==================== Aliases & Helpers for NotionExportButtonV3 ====================
+
+/**
+ * 포괄적 회의록 미리보기 (NotionExportButtonV3용)
+ * 실제로는 full report를 가져와서 통계를 계산
+ */
+export const previewComprehensiveReport = async (meetingId: string): Promise<{
+  participants_count: number;
+  absent_count: number;
+  discussions_count: number;
+  action_items_count: number;
+}> => {
+  try {
+    // Fetch full report to get summary and action items
+    const report = await getFullReport(meetingId);
+    
+    // Estimate counts
+    const actionItemsCount = report.action_items ? report.action_items.length : 0;
+    
+    // Estimate discussions from summary content (e.g. bullet points)
+    const summaryContent = report.summary?.content || '';
+    // Count bullet points or lines as a proxy for discussions
+    const discussionsCount = (summaryContent.match(/^- /gm) || []).length || 
+                             (summaryContent.split('\n').filter(line => line.trim().length > 0).length);
+    
+    return {
+      participants_count: 1, // Default to 1 (host) as we don't track participants fully yet
+      absent_count: 0,
+      discussions_count: discussionsCount,
+      action_items_count: actionItemsCount
+    };
+  } catch (error) {
+    console.error('Failed to preview report:', error);
+    return {
+      participants_count: 0,
+      absent_count: 0,
+      discussions_count: 0,
+      action_items_count: 0
+    };
+  }
+};
+
+export const pushComprehensiveReportToNotion = async (meetingId: string, parentPageId?: string) => {
+  const result = await exportToNotionComprehensive(meetingId, parentPageId);
+  return {
+    ...result,
+    participants_count: result.included.participants,
+    absent_count: 0,
+    discussions_count: 0,
+    decisions_count: 0,
+    action_items_count: result.included.action_items,
+    pending_issues_count: 0
+  };
+};
+
+export const pushReportToNotion = pushToNotion;
+export const pushActionItemsToNotion = async (meetingId: string, databaseId?: string) => {
+  const result = await exportActionItemsToNotion(meetingId, databaseId);
+  return {
+    ...result,
+    notion_url: result.items.length > 0 ? result.items[0].url : ''
+  };
+};
+
