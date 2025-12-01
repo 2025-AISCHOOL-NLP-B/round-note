@@ -1,15 +1,14 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { Card, CardContent } from '@/shared/ui/card';
 import { Button } from '@/shared/ui/button';
 import { Badge } from '@/shared/ui/badge';
 import { Input } from '@/shared/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
-import { Checkbox } from '@/shared/ui/checkbox';
 import { Calendar, CheckCircle2, Circle, Eye, Search, Filter, Trash2 } from 'lucide-react';
 import { MeetingDetail } from '@/features/meetings/MeetingDetail';
 import { ScrollToTop } from '@/features/utils/ScrollToTop';
 import type { Meeting } from '@/features/dashboard/Dashboard';
-import { toast } from 'sonner';
+
 
 interface MeetingListViewProps {
   meetings: Meeting[];
@@ -19,8 +18,6 @@ interface MeetingListViewProps {
 
 export function MeetingListView({ meetings, onUpdateMeeting, onDeleteMeeting }: MeetingListViewProps) {
   const [selectedMeeting, setSelectedMeeting] = useState<Meeting | null>(null);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [isDeleting, setIsDeleting] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'completed' | 'pending'>('all');
@@ -72,104 +69,7 @@ export function MeetingListView({ meetings, onUpdateMeeting, onDeleteMeeting }: 
     return Math.round((completed / meeting.actionItems.length) * 100);
   };
 
-  const handleToggleSelect = (id: string) => {
-    setSelectedIds(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(id)) {
-        newSet.delete(id);
-      } else {
-        newSet.add(id);
-      }
-      return newSet;
-    });
-  };
 
-  const handleToggleSelectAll = () => {
-    if (selectedIds.size === filteredAndSortedMeetings.length) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(filteredAndSortedMeetings.map(m => m.id)));
-    }
-  };
-
-  const handleBulkDelete = async () => {
-    if (selectedIds.size === 0) {
-      toast.error('삭제할 회의를 선택해주세요.');
-      return;
-    }
-
-    if (!confirm(`선택한 ${selectedIds.size}개의 회의를 삭제하시겠습니까?`)) {
-      return;
-    }
-
-    setIsDeleting(true);
-    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-    const failedIds: string[] = [];
-
-    try {
-      // Delete all selected meetings from backend
-      await Promise.all(
-        Array.from(selectedIds).map(async (id) => {
-          try {
-            const response = await fetch(`${API_URL}/api/v1/meetings/${id}`, {
-              method: 'DELETE',
-              credentials: 'include',
-            });
-            if (!response.ok) {
-              failedIds.push(id);
-            }
-          } catch (error) {
-            console.error(`Failed to delete meeting ${id}:`, error);
-            failedIds.push(id);
-          }
-        })
-      );
-
-      // Update state immediately for successful deletions
-      const successIds = Array.from(selectedIds).filter(id => !failedIds.includes(id));
-      successIds.forEach(id => onDeleteMeeting(id));
-
-      if (failedIds.length > 0) {
-        toast.error(`${failedIds.length}개 회의 삭제 실패`);
-      } else {
-        toast.success(`${selectedIds.size}개 회의가 삭제되었습니다.`);
-      }
-
-      setSelectedIds(new Set());
-    } catch (error) {
-      console.error('Bulk delete error:', error);
-      toast.error('일괄 삭제 중 오류가 발생했습니다.');
-    } finally {
-      setIsDeleting(false);
-    }
-  };
-
-  const handleSingleDelete = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-
-    if (!confirm('이 회의를 삭제하시겠습니까?')) {
-      return;
-    }
-
-    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-
-    try {
-      const response = await fetch(`${API_URL}/api/v1/meetings/${id}`, {
-        method: 'DELETE',
-        credentials: 'include',
-      });
-
-      if (response.ok) {
-        onDeleteMeeting(id);
-        toast.success('회의가 삭제되었습니다.');
-      } else {
-        toast.error('회의 삭제에 실패했습니다.');
-      }
-    } catch (error) {
-      console.error('Delete error:', error);
-      toast.error('삭제 중 오류가 발생했습니다.');
-    }
-  };
 
   // If a meeting is selected, show detail view
   if (selectedMeeting) {
@@ -185,6 +85,7 @@ export function MeetingListView({ meetings, onUpdateMeeting, onDeleteMeeting }: 
       />
     );
   }
+
 
   return (
     <div className={`space-y-5`}>
@@ -233,34 +134,6 @@ export function MeetingListView({ meetings, onUpdateMeeting, onDeleteMeeting }: 
               </div>
             </div>
 
-            {/* Selection Actions */}
-            {filteredAndSortedMeetings.length > 0 && (
-              <div className="mt-4 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <Checkbox
-                    id="select-all"
-                    checked={selectedIds.size === filteredAndSortedMeetings.length && filteredAndSortedMeetings.length > 0}
-                    onCheckedChange={handleToggleSelectAll}
-                  />
-                  <label htmlFor="select-all" className="text-sm text-gray-600 cursor-pointer">
-                    전체 선택 ({selectedIds.size}/{filteredAndSortedMeetings.length})
-                  </label>
-                </div>
-                {selectedIds.size > 0 && (
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={handleBulkDelete}
-                    disabled={isDeleting}
-                    className="gap-2"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    선택 삭제 ({selectedIds.size}개)
-                  </Button>
-                )}
-              </div>
-            )}
-
             {searchQuery && (
               <div className="mt-4 text-sm text-gray-600">
                 검색 결과: {filteredAndSortedMeetings.length}개
@@ -291,27 +164,29 @@ export function MeetingListView({ meetings, onUpdateMeeting, onDeleteMeeting }: 
             const completedCount = meeting.actionItems.filter(item => item.completed).length;
 
             return (
-              <Card key={meeting.id} className="hover:shadow-lg transition-shadow">
-                <CardContent className="pt-6">
+              <Card key={meeting.id} className="hover:shadow-lg transition-shadow cursor-pointer">
+                <CardContent className="pt-6" onClick={() => setSelectedMeeting(meeting)}>
                   <div className="space-y-4">
-                    {/* Header: checkbox + title */}
-                    <div className="flex items-start gap-3">
-                      <Checkbox
-                        id={`meeting-${meeting.id}`}
-                        checked={selectedIds.has(meeting.id)}
-                        onCheckedChange={() => handleToggleSelect(meeting.id)}
-                        onClick={(e) => e.stopPropagation()}
-                        className="mt-1"
-                      />
-                      <div className="flex-1 cursor-pointer" onClick={() => setSelectedMeeting(meeting)}>
+                    {/* Header: title + delete */}
+                    <div className="flex items-start justify-between">
+                      <div>
                         <h3 className="mb-2 line-clamp-2">{meeting.title}</h3>
                         <div className="flex items-center gap-2 text-sm text-gray-600">
                           <Calendar className="w-3 h-3" />
                           <span>{meeting.date}</span>
                         </div>
                       </div>
+                      <div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={(e) => { e.stopPropagation(); onDeleteMeeting(meeting.id); }}
+                          className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
                     </div>
-
                     {/* Participants (show only if exists) */}
                     {meeting.participants && meeting.participants.length > 0 ? (
                       <p className="text-sm text-gray-600 line-clamp-2">
@@ -351,18 +226,16 @@ export function MeetingListView({ meetings, onUpdateMeeting, onDeleteMeeting }: 
                       />
                     </div>
 
-                    {/* Action Buttons */}
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="flex-1 gap-2"
-                        onClick={() => setSelectedMeeting(meeting)}
-                      >
-                        <Eye className="w-4 h-4" />
-                        상세 보기
-                      </Button>
-                    </div>
+                    {/* View Button */}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full gap-2"
+                      onClick={() => setSelectedMeeting(meeting)}
+                    >
+                      <Eye className="w-4 h-4" />
+                      상세 보기
+                    </Button>
                   </div>
                 </CardContent>
               </Card>

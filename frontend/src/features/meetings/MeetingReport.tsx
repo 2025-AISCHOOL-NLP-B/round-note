@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
 import { Button } from '@/shared/ui/button';
-import { Download, FileBarChart, Calendar, Users, Target, CheckCircle2, Clock, TrendingUp, ExternalLink, ListChecks, User } from 'lucide-react';
+import { Download, FileBarChart, Calendar, Users, Target, CheckCircle2, Clock, TrendingUp, ExternalLink, ListChecks } from 'lucide-react';
 import type { Meeting } from '@/features/dashboard/Dashboard';
 import { toast } from 'sonner';
 
@@ -87,9 +87,9 @@ ${meeting.summary}
 
 참여자별 현황
 --------------
-${reportData.itemsPerPerson.map(person =>
-      `${person.name}: ${person.total}개 (완료 ${person.completed}, 진행 ${person.pending}, 완료율 ${person.completionRate}%)`
-    ).join('\n')}
+${reportData.itemsPerPerson.map(person => 
+  `${person.name}: ${person.total}개 (완료 ${person.completed}, 진행 ${person.pending}, 완료율 ${person.completionRate}%)`
+).join('\n')}
 
 액션 아이템 상세
 --------------
@@ -250,94 +250,17 @@ ${meeting.content}
         </CardContent>
       </Card>
 
-      {/* Full Meeting Content (회의 원문) - Timeline UX */}
+      {/* Full Meeting Content (회의 원문) */}
       <Card>
         <CardHeader>
           <CardTitle>회의 원문</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="bg-slate-50 rounded-lg p-4 max-h-[500px] overflow-y-auto">
-            {(() => {
-              // Parse meeting content into speaker segments
-              type Segment = { timestamp: string; speaker: string; text: string; id: string };
-              type SegmentWithoutId = { timestamp: string; speaker: string; text: string };
-
-              const parseContent = (content: string): Segment[] => {
-                if (!content || !content.trim()) return [];
-
-                const lines = content.split("\n");
-                const segments: Segment[] = [];
-                let currentSegment: SegmentWithoutId | undefined; // ✅ null 대신 undefined 사용
-
-                lines.forEach((line) => {
-                  const headerMatch = line.match(/^\[([^\]]+)\]\s*(.+)$/);
-
-                  if (headerMatch) {
-                    // 이전 segment 저장
-                    if (currentSegment && currentSegment.text.trim()) {
-                      const seg: Segment = { ...currentSegment, id: `seg-${segments.length}` };
-                      segments.push(seg);
-                    }
-
-                    const restOfLine = headerMatch[2];
-                    const speakerMatch = restOfLine.match(/^(Speaker\s+\d+|[^:]+)/);
-
-                    if (speakerMatch) {
-                      currentSegment = {
-                        timestamp: headerMatch[1],
-                        speaker: speakerMatch[1].trim(),
-                        text: restOfLine
-                          .substring(speakerMatch[0].length)
-                          .replace(/^:?\s*/, "")
-                          .trim(),
-                      };
-                    }
-                  } else if (currentSegment && line.trim()) {
-                    currentSegment.text += (currentSegment.text ? " " : "") + line.trim();
-                  }
-                });
-
-                // 마지막 segment 저장
-                if (currentSegment && currentSegment.text.trim()) {
-                  const seg: Segment = { ...currentSegment, id: `seg-${segments.length}` };
-                  segments.push(seg);
-                }
-
-                return segments;
-              };
-
-              const segments = parseContent(meeting.content);
-
-              if (segments.length === 0) {
-                return <p className="text-gray-500 text-center py-8">회의 내용이 없습니다</p>;
-              }
-
-              return (
-                <div className="space-y-6">
-                  {segments.map((segment) => (
-                    <div key={segment.id} className="flex gap-3">
-                      <div className="flex flex-col items-center gap-1 min-w-[60px]">
-                        <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600">
-                          <User className="w-4 h-4" />
-                        </div>
-                      </div>
-                      <div className="flex-1 space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-semibold text-slate-700">{segment.speaker}</span>
-                          <span className="text-xs text-slate-400">{segment.timestamp}</span>
-                        </div>
-                        <div className="p-3 bg-white rounded-lg rounded-tl-none border border-slate-200 shadow-sm text-slate-700 leading-relaxed">
-                          {segment.text}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              );
-            })()}
+          <div className="bg-gray-50 rounded-lg p-4 max-h-[500px] overflow-y-auto">
+            <p className="whitespace-pre-wrap text-gray-700">{meeting.content}</p>
           </div>
         </CardContent>
       </Card>
-    </div >
+    </div>
   );
 }
