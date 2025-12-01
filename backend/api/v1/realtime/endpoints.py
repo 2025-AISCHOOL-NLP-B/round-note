@@ -40,12 +40,8 @@ async def websocket_endpoint(
     translate: bool = True, 
     summary: bool = False,
     channels: int = 1, # 클라이언트로부터 채널 수 요청 받음 (기본 1)
-<<<<<<< HEAD
     meetingId: str = None, # 회의 ID (선택)
     participants: str = None # 참여자 목록 (쉼표 구분, 키워드 부스팅용)
-=======
-    meetingId: str = None # 회의 ID (선택)
->>>>>>> c313084eb18c5b12a6ea86f777531a1e6ff7e23d
 ):
     """
     메인 WebSocket 핸들러, 클라이언트와 Deepgram 간의 중계 역할을 합니다.
@@ -55,11 +51,7 @@ async def websocket_endpoint(
                      STT 키워드 부스팅에 사용되어 이름 인식률 향상
     """
     await websocket.accept()
-<<<<<<< HEAD
     logging.info(f"React <-> FastAPI WebSocket 연결 수립됨. (요청 채널: {channels}, MeetingID: {meetingId}, Participants: {participants})")
-=======
-    logging.info(f"React <-> FastAPI WebSocket 연결 수립됨. (요청 채널: {channels}, MeetingID: {meetingId})")
->>>>>>> c313084eb18c5b12a6ea86f777531a1e6ff7e23d
     
     settings = TranscribeSettings(translate=translate, summary=summary, meeting_id=meetingId)
     
@@ -75,7 +67,6 @@ async def websocket_endpoint(
     }
     
     try:
-<<<<<<< HEAD
         # 참여자 이름을 키워드 리스트로 파싱
         keywords = []
         if participants:
@@ -85,10 +76,6 @@ async def websocket_endpoint(
         
         # 요청된 채널 수와 키워드에 맞춰 Deepgram URL 생성
         dg_url, dg_headers = stt_service.get_realtime_stt_url(channels=channels, keywords=keywords)
-=======
-        # 요청된 채널 수에 맞춰 Deepgram URL 생성
-        dg_url, dg_headers = stt_service.get_realtime_stt_url(channels=channels)
->>>>>>> c313084eb18c5b12a6ea86f777531a1e6ff7e23d
         
         # meetingId가 있으면 해당 ID로 파일 생성, 없으면 랜덤 생성
         # 파일 생성 시 사용된 ID를 file_id로 저장

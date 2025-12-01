@@ -46,7 +46,6 @@ class STTService:
         # TODO: (Team Member B) Initialize ElevenLabs client (for batch STT)
     
     @api_retry_stt
-<<<<<<< HEAD
     def get_realtime_stt_url(self, channels: int = 1, keywords: list[str] = None) -> tuple[str, dict]:
         """
         Returns the URL and headers required for FastAPI to connect to the Deepgram WebSocket.
@@ -58,20 +57,10 @@ class STTService:
         Auto-retry: Retries up to 3 times on network errors.
         """
         logger.debug(f"Generating Deepgram WebSocket URL (Channels: {channels}, Keywords: {keywords})", extra={"service": "stt"})
-=======
-    def get_realtime_stt_url(self, channels: int = 1) -> tuple[str, dict]:
-        """
-        Returns the URL and headers required for FastAPI to connect to the Deepgram WebSocket.
-        
-        Auto-retry: Retries up to 3 times on network errors.
-        """
-        logger.debug(f"Generating Deepgram WebSocket URL (Channels: {channels})", extra={"service": "stt"})
->>>>>>> c313084eb18c5b12a6ea86f777531a1e6ff7e23d
             
         # 동적으로 채널 수 설정
         params = self.DEEPGRAM_PARAMS + f"&channels={channels}"
         
-<<<<<<< HEAD
         # 키워드 부스팅 추가 (참여자 이름 등)
         if keywords and len(keywords) > 0:
             # Deepgram 키워드 형식: keywords=키워드1:boost,키워드2:boost
@@ -80,9 +69,7 @@ class STTService:
             if keyword_params:
                 params += f"&keywords={keyword_params}"
                 logger.info(f"Keywords boosting enabled: {keyword_params}", extra={"service": "stt"})
-        
-=======
->>>>>>> c313084eb18c5b12a6ea86f777531a1e6ff7e23d
+
         full_url = self.DEEPGRAM_BASE_URL + params
         headers = {"Authorization": f"Token {self.DEEPGRAM_API_KEY}"}
         
