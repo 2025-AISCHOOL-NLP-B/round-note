@@ -211,8 +211,13 @@ def update_meeting(
     
     본인이 생성한 회의만 수정할 수 있습니다.
     """
-    # 회의 조회
-    db_meeting = meeting_crud.get_meeting(db=db, meeting_id=meeting_id)
+    from sqlalchemy.orm import joinedload
+    
+    # 회의 조회 (요약과 액션 아이템 포함)
+    db_meeting = db.query(models.Meeting).options(
+        joinedload(models.Meeting.summaries),
+        joinedload(models.Meeting.action_items)
+    ).filter(models.Meeting.MEETING_ID == meeting_id).first()
     
     # 회의가 존재하지 않는 경우
     if not db_meeting:
@@ -235,7 +240,48 @@ def update_meeting(
         meeting_in=meeting_update
     )
     
-    return updated_meeting
+    # dict로 변환하여 반환
+    meeting_dict = {
+        "meeting_id": updated_meeting.MEETING_ID,
+        "creator_id": updated_meeting.CREATOR_ID,
+        "title": updated_meeting.TITLE,
+        "purpose": updated_meeting.PURPOSE,
+        "start_dt": updated_meeting.START_DT,
+        "end_dt": updated_meeting.END_DT,
+        "location": updated_meeting.LOCATION,
+        "content": updated_meeting.CONTENT,
+        "translated_content": updated_meeting.TRANSLATED_CONTENT,
+        "ai_summary": updated_meeting.AI_SUMMARY,
+        "participants": updated_meeting.PARTICIPANTS,
+        "key_decisions": updated_meeting.KEY_DECISIONS,
+        "next_steps": updated_meeting.NEXT_STEPS,
+        "audio_url": updated_meeting.AUDIO_URL,
+        "summary": {
+            "summary_id": updated_meeting.summaries[0].SUMMARY_ID,
+            "content": updated_meeting.summaries[0].CONTENT,
+            "translated_content": updated_meeting.summaries[0].TRANSLATED_CONTENT,
+            "format": updated_meeting.summaries[0].FORMAT,
+            "created_dt": updated_meeting.summaries[0].CREATED_DT
+        } if updated_meeting.summaries else None,
+        "action_items": [
+            {
+                "item_id": item.ITEM_ID,
+                "title": item.TITLE,
+                "description": item.DESCRIPTION,
+                "status": item.STATUS,
+                "priority": item.PRIORITY,
+                "assignee_id": item.ASSIGNEE_ID,
+                "assignee_name": item.ASSIGNEE_NAME,
+                "jira_assignee_id": item.JIRA_ASSIGNEE_ID,
+                "due_dt": item.DUE_DT,
+                "created_dt": item.CREATED_DT,
+                "updated_dt": item.UPDATED_DT
+            }
+            for item in updated_meeting.action_items
+        ] if updated_meeting.action_items else []
+    }
+    
+    return meeting_dict
 
 # ==================== 5. 회의 삭제 ====================
 @router.delete("/{meeting_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -33,26 +33,53 @@ export function MeetingStart({ meetings, onAddMeeting }: MeetingStartProps) {
     // 1. 백엔드에 회의 생성/업데이트 요청
     toast.info('회의를 저장하는 중...');
     
+    console.log('[MeetingStart] Starting save process...');
+    console.log('[MeetingStart] Created Meeting ID:', createdMeetingId);
+    console.log('[MeetingStart] API URL:', process.env.NEXT_PUBLIC_API_URL);
+    
     let meetingData;
     try {
       if (createdMeetingId) {
         // 기존 회의 업데이트
+        console.log('[MeetingStart] Updating existing meeting:', createdMeetingId);
         meetingData = await updateMeeting(createdMeetingId, {
           title: info.title,
           purpose: info.purpose,
         });
+        console.log('[MeetingStart] Meeting updated successfully:', meetingData);
       } else {
         // 회의 생성 (fallback)
+        console.log('[MeetingStart] Creating new meeting...');
         meetingData = await createMeeting({
           title: info.title,
           purpose: info.purpose,
           is_realtime: true,
         });
+        console.log('[MeetingStart] Meeting created successfully:', meetingData);
         setCreatedMeetingId(meetingData.meeting_id);
       }
     } catch (createError) {
       console.error('[MeetingStart] Failed to create/update meeting:', createError);
-      toast.error('회의 저장에 실패했습니다.');
+      console.error('[MeetingStart] Error details:', {
+        name: createError instanceof Error ? createError.name : 'Unknown',
+        message: createError instanceof Error ? createError.message : String(createError),
+        stack: createError instanceof Error ? createError.stack : undefined
+      });
+      
+      // 더 자세한 에러 메시지 표시
+      if (createError instanceof Error) {
+        if (createError.message.includes('Failed to fetch')) {
+          toast.error('서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인해주세요.');
+        } else if (createError.message.includes('인증') || createError.message.includes('Unauthorized')) {
+          toast.error('인증이 만료되었습니다. 다시 로그인해주세요.');
+          router.push('/login');
+          return;
+        } else {
+          toast.error(`회의 저장 실패: ${createError.message}`);
+        }
+      } else {
+        toast.error('회의 저장에 실패했습니다.');
+      }
       return;
     }
 

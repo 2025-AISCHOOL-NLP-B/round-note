@@ -64,20 +64,6 @@ export interface RegenerateResponse {
   action_items_count: number;
 }
 
-// 템플릿 관련 타입
-export interface TemplateSection {
-  id: string;
-  title: string;
-  placeholder: string;
-}
-
-export interface Template {
-  id: string;
-  name: string;
-  description?: string;
-  sections: TemplateSection[];
-}
-
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
@@ -131,8 +117,6 @@ export const getFullReport = async (meetingId: string): Promise<FullReportRespon
 
 /**
  * 요약 및 액션 아이템 재생성 (LLM 호출)
- * @param meetingId - 회의 ID
- * @param template - 선택된 템플릿 (선택사항)
  */
 export const regenerateSummary = async (meetingId: string): Promise<RegenerateResponse> => {
   const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/regenerate`, 
