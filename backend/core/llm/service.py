@@ -341,7 +341,7 @@ Keep it concise (3-5 bullet points) focusing on actionable information."""
                 "rolling_summary": previous_summary or ""
             }
 
-    async def get_summary_and_actions(self, texts: list[str], previous_summary: str = "") -> dict:
+    async def get_summary_and_actions(self, texts: list[str], previous_summary: str = "", template: dict = None) -> dict:
         """
         누적된 텍스트를 기반으로 요약과 액션 아이템 추출
         (배치 Worker에서 사용)
@@ -349,6 +349,14 @@ Keep it concise (3-5 bullet points) focusing on actionable information."""
         Args:
             texts: 회의 내용 텍스트 리스트
             previous_summary: 이전 요약 (있으면 반영, 없으면 새로 생성)
+            template: 템플릿 정보 (선택사항)
+                {
+                    "name": "템플릿 이름",
+                    "sections": [
+                        {"title": "섹션 제목", "placeholder": "안내 텍스트"},
+                        ...
+                    ]
+                }
             
         Returns:
             dict: {
@@ -357,8 +365,11 @@ Keep it concise (3-5 bullet points) focusing on actionable information."""
             }
         """
         try:
-            # 1. 요약 생성
-            new_summary = await self.generate_summary(texts)
+            # 1. 요약 생성 (템플릿 있으면 템플릿 기반)
+            if template and template.get("sections"):
+                new_summary = await self.generate_summary_with_template(texts, template)
+            else:
+                new_summary = await self.generate_summary(texts)
             
             # 2. 이전 요약과 병합 (있으면)
             if previous_summary:
@@ -380,6 +391,74 @@ Keep it concise (3-5 bullet points) focusing on actionable information."""
                 "rolling_summary": previous_summary or "[요약 생성 실패]",
                 "action_items": []
             }
+
+    async def generate_summary_with_template(self, texts: List[str], template: dict) -> str:
+        """
+        템플릿 기반 회의록 요약 생성
+        
+        Args:
+            texts: 회의 내용 텍스트 리스트
+            template: 템플릿 정보
+                {
+                    "name": "템플릿 이름",
+                    "sections": [
+                        {"title": "섹션 제목", "placeholder": "안내 텍스트"},
+                        ...
+                    ]
+                }
+            
+        Returns:
+            str: 템플릿 형식으로 요약된 회의 내용
+        """
+        if not texts:
+            return ""
+        
+        full_transcript = "\n".join(texts)
+        template_name = template.get("name", "회의")
+        sections = template.get("sections", [])
+        
+        # 섹션 구조 생성
+        section_format = "\n".join([
+            f"## {section['title']}\n{section.get('placeholder', '내용을 작성하세요')}"
+            for section in sections
+        ])
+        
+        try:
+            chat_completion = await self.client.chat.completions.create(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": f"""You are a professional meeting summarizer.
+Create a structured summary following the EXACT template format provided.
+
+Template Name: {template_name}
+
+Required Sections (fill in each section based on the meeting content):
+{section_format}
+
+Important:
+- Use Korean for the summary
+- Follow the exact section structure provided
+- If no relevant content for a section, write "해당 없음" or brief note
+- Extract specific details from the transcript
+- Keep each section concise but informative"""
+                    },
+                    {
+                        "role": "user",
+                        "content": f"다음 회의 내용을 위 템플릿 형식에 맞춰 요약해주세요:\n\n{full_transcript}"
+                    }
+                ],
+                model="gpt-4o-mini",
+                temperature=0.3,
+                max_tokens=2000
+            )
+            
+            summary = chat_completion.choices[0].message.content.strip()
+            return summary
+            
+        except Exception as e:
+            print(f"LLM Template Summary Error: {e}")
+            return f"[템플릿 요약 생성 오류: {e}]"
 
 
 # ============================================
