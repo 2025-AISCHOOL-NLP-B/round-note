@@ -40,13 +40,14 @@ async def websocket_endpoint(
     translate: bool = True, 
     summary: bool = False,
     channels: int = 1, # 클라이언트로부터 채널 수 요청 받음 (기본 1)
+    sampleRate: int = 16000, # 실제 AudioContext 샘플레이트
     meetingId: str = None # 회의 ID (선택)
 ):
     """
     메인 WebSocket 핸들러, 클라이언트와 Deepgram 간의 중계 역할을 합니다.
     """
     await websocket.accept()
-    logging.info(f"React <-> FastAPI WebSocket 연결 수립됨. (요청 채널: {channels}, MeetingID: {meetingId})")
+    logging.info(f"React <-> FastAPI WebSocket 연결 수립됨. (요청 채널: {channels}, 샘플레이트: {sampleRate}Hz, MeetingID: {meetingId})")
     
     settings = TranscribeSettings(translate=translate, summary=summary, meeting_id=meetingId)
     
@@ -62,20 +63,20 @@ async def websocket_endpoint(
     }
     
     try:
-        # 요청된 채널 수에 맞춰 Deepgram URL 생성
-        dg_url, dg_headers = stt_service.get_realtime_stt_url(channels=channels)
+        # 요청된 채널 수와 샘플레이트에 맞춰 Deepgram URL 생성
+        dg_url, dg_headers = stt_service.get_realtime_stt_url(channels=channels, sample_rate=sampleRate)
         
         # meetingId가 있으면 해당 ID로 파일 생성, 없으면 랜덤 생성
         # 파일 생성 시 사용된 ID를 file_id로 저장
         file_id = meetingId
         if file_id:
-            wave_file, file_path = storage_service.create_local_wave_file(meeting_id=file_id)
+            wave_file, file_path = storage_service.create_local_wave_file(meeting_id=file_id, channels=channels, sample_rate=sampleRate)
         else:
             # meetingId가 없으면 내부적으로 생성된 ID를 사용해야 함.
             # create_local_wave_file이 ID를 반환하지 않으므로, 미리 생성해서 넘김
             import ulid
             file_id = str(ulid.new())
-            wave_file, file_path = storage_service.create_local_wave_file(meeting_id=file_id)
+            wave_file, file_path = storage_service.create_local_wave_file(meeting_id=file_id, channels=channels, sample_rate=sampleRate)
             logging.info(f"Generated temporary file ID: {file_id}")
         
         # 2. Deepgram WebSocket에 연결
