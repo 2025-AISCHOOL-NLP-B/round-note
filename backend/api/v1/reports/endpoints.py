@@ -536,6 +536,62 @@ async def regenerate_summary(
 
 
 # ============================================
+# 실시간 액션 아이템 추출 (회의 종료와 별개) ⭐
+# ============================================
+@router.post("/{meeting_id}/actions/realtime")
+async def generate_realtime_actions(
+    meeting_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    실시간 액션 아이템 추출 (회의 종료와 별개)
+    
+    프론트엔드에서 사용:
+    - 회의 진행 중 "액션 아이템 추출" 버튼
+    - 전사 스트림 기반으로 즉시 액션아이템 생성
+    
+    동작:
+    1. Meeting.CONTENT 대신 현재까지 누적된 전사 텍스트 사용
+    2. LLM 서비스로 액션아이템만 추출
+    3. DB 저장은 선택 (여기서는 저장하지 않고 결과만 반환)
+    """
+
+    # 회의 존재 확인
+    meeting = db.query(models.Meeting).filter(
+        models.Meeting.MEETING_ID == meeting_id
+    ).first()
+
+    if not meeting:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Meeting {meeting_id} not found"
+        )
+
+    # CONTENT가 없어도 진행 가능 (실시간 스트림 기반)
+    transcript_texts = []
+    if meeting.CONTENT:
+        transcript_texts.append(meeting.CONTENT)
+
+    try:
+        # LLM 서비스 초기화
+        llm_service = LLMService()
+
+        # 액션아이템만 추출
+        result = await llm_service.get_action_items_only(transcript_texts)
+
+        return {
+            "message": "Realtime action items generated successfully",
+            "meeting_id": meeting_id,
+            "action_items": result["action_items"]
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate realtime action items: {str(e)}"
+        )
+
+# ============================================
 # 5. RAG 검색 (TODO: 권현재님 RAG 완성 후)
 # ============================================
 @router.get("/{meeting_id}/search")

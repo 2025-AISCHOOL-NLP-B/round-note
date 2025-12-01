@@ -50,7 +50,7 @@ export interface TranscriptSegment {
     isFinal: boolean;
 }
 
-    interface RealtimeStreamControls {
+interface RealtimeStreamControls {
     isRecording: boolean;
     isPaused: boolean;
     transcript: TranscriptSegment[];
@@ -85,7 +85,7 @@ const useRealtimeStream = (): RealtimeStreamControls => {
     const isPausedRef = useRef<boolean>(false); // 최신 isPaused 상태를 추적
     const silenceIntervalRef = useRef<NodeJS.Timeout | null>(null); // 침묵 오디오 전송 인터벌
     const mediaStreamRef = useRef<MediaStream | null>(null); // 마이크 스트림 참조
-    
+
     // Audio Processing Refs
     const audioContextRef = useRef<AudioContext | null>(null);
     const stereoNodeRef = useRef<AudioWorkletNode | null>(null);
@@ -191,7 +191,7 @@ const useRealtimeStream = (): RealtimeStreamControls => {
 
             // 5. 프로세서 연결
             mergerNode.connect(stereoNode);
-            
+
             // [Fix] Chrome 등 일부 브라우저에서 destination에 연결되지 않으면 AudioWorklet이 동작하지 않는 문제 해결
             // 무음 Gain 노드를 통해 destination에 연결하여 오디오 그래프 활성화 유지
             const silentGain = audioContext.createGain();
@@ -210,7 +210,7 @@ const useRealtimeStream = (): RealtimeStreamControls => {
                 if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                     // event.data is ArrayBuffer (Int16)
                     // console.log(`Sending audio chunk: ${event.data.byteLength} bytes`); // Debug
-                    
+
                     // [Debug] 가끔씩 데이터 내용 확인
                     if (Math.random() < 0.01) {
                         const int16Data = new Int16Array(event.data);
@@ -259,7 +259,7 @@ const useRealtimeStream = (): RealtimeStreamControls => {
             // 주의: 비디오 트랙을 중지하면 공유 중지 UI가 사라질 수 있음. 
             // 하지만 오디오만 필요한 경우 리소스를 위해 중지하는 것이 좋음.
             // 여기서는 사용자가 "공유 중지"를 누를 수 있게 유지하되, 처리는 하지 않음.
-            
+
             const audioTrack = stream.getAudioTracks()[0];
             if (!audioTrack) {
                 console.warn("시스템 오디오 트랙을 찾을 수 없습니다. (오디오 공유 체크 확인)");
@@ -269,12 +269,12 @@ const useRealtimeStream = (): RealtimeStreamControls => {
 
             systemStreamRef.current = stream;
             setIsSystemAudioShared(true);
-            
+
             console.log(`[SystemAudio] Stream obtained. MicStream active: ${!!mediaStreamRef.current}`);
 
             // 만약 녹음 중이라면 즉시 오디오 그래프에 연결해야 함
             if (isRecordingRef.current) {
-                 if (audioContextRef.current && mergerNodeRef.current) {
+                if (audioContextRef.current && mergerNodeRef.current) {
                     // [Fix] AudioContext 상태 확인 및 재개
                     if (audioContextRef.current.state === 'suspended') {
                         await audioContextRef.current.resume();
@@ -286,14 +286,14 @@ const useRealtimeStream = (): RealtimeStreamControls => {
                     systemSourceRef.current = systemSource;
                     systemSource.connect(mergerNodeRef.current, 0, 1);
                     console.log("시스템 오디오 연결됨 (기존 그래프)");
-                 } else {
+                } else {
                     // 그래프가 없으면 새로 설정 (MicStream이 있어야 함)
                     if (mediaStreamRef.current) {
                         await setupAudioProcessing();
                     } else {
                         console.warn("[SystemAudio] 녹음 중이나 마이크 스트림이 없음. 그래프 설정 보류.");
                     }
-                 }
+                }
             } else {
                 console.log("[SystemAudio] 녹음 대기 중. 시작 시 그래프 설정 예정.");
             }
@@ -524,7 +524,7 @@ const useRealtimeStream = (): RealtimeStreamControls => {
             if (meetingId) {
                 wsUrl += `&meetingId=${meetingId}`;
             }
-            
+
             console.log(`WebSocket 연결 시도 (Channels: ${channels}, MeetingID: ${meetingId}):`, wsUrl);
             console.log("환경변수 API_URL:", process.env.NEXT_PUBLIC_API_URL);
 
@@ -576,7 +576,7 @@ const useRealtimeStream = (): RealtimeStreamControls => {
                             const timeString = `${now.getHours().toString().padStart(2, '0')}시 ${now.getMinutes().toString().padStart(2, '0')}분 ${now.getSeconds().toString().padStart(2, '0')}초`;
 
                             // message.text 안에서 [Speaker X] 패턴을 분리
-                            const match = message.text.match(/^\[Speaker (\d+)\]\s*(.*)$/);
+                            const match = message.text.match(/^\[(?:Mic |System )?Speaker\s+(\d+)\]\s*(.*)$/);
                             const speaker = match ? `Speaker ${match[1]}` : "Unknown";
                             const cleanText = match ? match[2] : message.text;
 
@@ -671,7 +671,7 @@ const useRealtimeStream = (): RealtimeStreamControls => {
                     console.log("VAD 시작 전 스트림 생성 시도...");
                     await getOrCreateMediaStream();
                 }
-                
+
                 vadStart();
                 console.log("VAD 시작됨");
             }
@@ -680,7 +680,7 @@ const useRealtimeStream = (): RealtimeStreamControls => {
             // [Change] 시스템 오디오 공유 상태일 때만 Worklet 설정 (또는 필요시)
             if (isSystemAudioShared) {
                 console.log("시스템 오디오 공유 모드: AudioWorklet(Stereo) 설정 시작");
-                
+
                 // [Optimization] AudioContext를 미리 생성/재개하여 사용자 제스처 컨텍스트 활용 시도
                 if (!audioContextRef.current) {
                     audioContextRef.current = new AudioContext({ sampleRate: AUDIO_CONFIG.sampleRate });
@@ -691,7 +691,7 @@ const useRealtimeStream = (): RealtimeStreamControls => {
 
                 // VAD가 스트림을 점유하고 있을 수 있으므로 잠시 대기
                 await new Promise(resolve => setTimeout(resolve, 500));
-                
+
                 // 재확인: 스트림이 여전히 유효한지
                 if (mediaStreamRef.current) {
                     await setupAudioProcessing();
