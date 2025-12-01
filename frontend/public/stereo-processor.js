@@ -51,6 +51,15 @@ class StereoProcessor extends AudioWorkletProcessor {
             systemEnergy = Math.sqrt(systemEnergy / right.length);
         }
 
+        // [Debug] 시스템 오디오 데이터 유입 확인 (에너지가 0이면 데이터가 안 들어오는 것)
+        if (this.frameCounter % 100 === 0) {
+             // 시스템 오디오가 활성 상태인지(에너지가 있는지) 확인
+             const hasSystemAudio = systemEnergy > 0.0001;
+             if (hasSystemAudio || this.frameCounter % 500 === 0) {
+                 console.log(`[StereoProcessor] Frame ${this.frameCounter}. MicEnabled: ${this.micEnabled}, SysEnergy: ${systemEnergy.toFixed(6)} ${hasSystemAudio ? '🔊' : '🔇'}`);
+             }
+        }
+
         // 입력 길이 결정 (보통 128)
         const inputLength = left ? left.length : (right ? right.length : 128);
         

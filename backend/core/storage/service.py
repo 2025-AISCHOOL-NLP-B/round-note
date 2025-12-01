@@ -48,16 +48,20 @@ class StorageService:
 
 
     # 로컬 파일 생성 및 wave.open 관리를 책임집니다.
-    def create_local_wave_file(self, meeting_id: str = str(ulid.new())) -> tuple[wave.Wave_write, str]:
+    def create_local_wave_file(self, meeting_id: str = None) -> tuple[wave.Wave_write, str]:
         """로컬 오디오 파일을 생성하고 파일 핸들(wave.Wave_write)과 경로를 반환합니다."""
+        if meeting_id is None:
+            meeting_id = str(ulid.new())
+            
         os.makedirs(self.local_storage_path, exist_ok=True)
         file_path = os.path.join(self.local_storage_path, f"{meeting_id}.wav")
         
         wave_file = wave.open(file_path, 'wb')
-        wave_file.setnchannels(1)
+        # [Change] 프론트엔드에서 항상 Stereo(2ch) 데이터를 보내므로 파일도 2채널로 설정
+        wave_file.setnchannels(2)
         wave_file.setsampwidth(2)
         wave_file.setframerate(16000)
-        logging.info(f"로컬 오디오 저장 시작: {file_path}")
+        logging.info(f"로컬 오디오 저장 시작: {file_path} (Channels: 2, Rate: 16000)")
         return wave_file, file_path
 
     # 동기 함수인 writeframes를 to_thread로 감싸는 헬퍼 함수

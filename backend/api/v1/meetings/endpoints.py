@@ -398,6 +398,10 @@ async def end_meeting_and_process(
         "action_items": action_items
     }
 
+from pathlib import Path
+
+# ... existing code ...
+
 # ==================== 7. 회의 오디오 파일 다운로드 ====================
 @router.get("/{meeting_id}/audio")
 async def get_meeting_audio(
@@ -432,35 +436,58 @@ async def get_meeting_audio(
             detail="본인이 생성한 회의의 오디오만 다운로드할 수 있습니다."
         )
     
-    # LOCATION 또는 AUDIO_URL에서 파일 경로 확인
-    audio_path = db_meeting.LOCATION or db_meeting.AUDIO_URL
-    
-    if not audio_path:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="오디오 파일이 존재하지 않습니다."
-        )
-    
     # 로컬 파일 경로 확인 (audio_storage 폴더)
     # Docker 환경에서는 /app/audio_storage, 로컬에서는 ./audio_storage 사용
-    base_audio_dir = '/app/audio_storage' if os.path.exists('/app/audio_storage') else './audio_storage'
+    # 여러 경로를 확인하여 파일 찾기
+    possible_dirs = []
+    if os.path.exists('/app/audio_storage'):
+        possible_dirs.append('/app/audio_storage')
     
-    if audio_path.startswith('./audio_storage/'):
-        # 상대 경로를 절대 경로로 변환
-        filename = audio_path.replace('./audio_storage/', '')
-        file_path = os.path.join(base_audio_dir, filename)
-    elif audio_path.startswith('audio_storage/'):
-        filename = audio_path.replace('audio_storage/', '')
-        file_path = os.path.join(base_audio_dir, filename)
-    else:
-        # MEETING_ID.wav 형식으로 시도
-        file_path = os.path.join(base_audio_dir, f'{meeting_id}.wav')
+    # 프로젝트 루트 경로 계산 (backend/api/v1/meetings/endpoints.py -> root)
+    try:
+        root_dir = Path(__file__).resolve().parents[4]
+        root_audio_dir = root_dir / "audio_storage"
+        possible_dirs.append(str(root_audio_dir))
+    except:
+        pass
+
+    possible_dirs.append(os.path.abspath('./audio_storage'))
+    possible_dirs.append(os.path.abspath('../audio_storage'))
+    possible_dirs.append(os.path.abspath('./backend/audio_storage'))
+
+    file_path = None
+    found = False
+    
+    # 1. DB에 저장된 경로로 확인
+    audio_path = db_meeting.LOCATION or db_meeting.AUDIO_URL
+    if audio_path:
+        # 경로에서 파일명만 추출
+        filename = os.path.basename(audio_path)
+        
+        for base_dir in possible_dirs:
+            candidate = os.path.join(base_dir, filename)
+            if os.path.exists(candidate):
+                file_path = candidate
+                found = True
+                break
+    
+    # 2. DB 경로로 못 찾은 경우, meeting_id.wav로 확인
+    if not found:
+        filename = f'{meeting_id}.wav'
+        for base_dir in possible_dirs:
+            candidate = os.path.join(base_dir, filename)
+            if os.path.exists(candidate):
+                file_path = candidate
+                found = True
+                break
     
     # 파일 존재 확인
-    if not os.path.exists(file_path):
+    if not found or not file_path:
+        # 디버깅을 위해 검색한 경로들을 로그로 남기거나 에러 메시지에 포함
+        searched_paths = [os.path.join(d, f'{meeting_id}.wav') for d in possible_dirs]
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"오디오 파일을 찾을 수 없습니다: {file_path}"
+            detail=f"오디오 파일을 찾을 수 없습니다. 검색 경로: {searched_paths}"
         )
     
     # 파일 반환
@@ -503,22 +530,39 @@ async def upload_meeting_audio(
         )
     
     # 3. 파일 저장
-    base_audio_dir = '/app/audio_storage' if os.path.exists('/app/audio_storage') else './audio_storage'
+    base_audio_dir = None
+    if os.path.exists('/app/audio_storage'):
+        base_audio_dir = '/app/audio_storage'
+    else:
+        # 프로젝트 루트 경로 계산 (backend/api/v1/meetings/endpoints.py -> root)
+        try:
+            root_dir = Path(__file__).resolve().parents[4]
+            base_audio_dir = str(root_dir / "audio_storage")
+        except:
+            base_audio_dir = './audio_storage'
+
     os.makedirs(base_audio_dir, exist_ok=True)
     
     file_path = os.path.join(base_audio_dir, f'{meeting_id}.wav')
+    print(f"Saving audio to: {file_path}")  # Debug log
     
     try:
         with open(file_path, 'wb') as buffer:
             content = await file.read()
             buffer.write(content)
     except Exception as e:
+        print(f"Failed to save audio file: {e}") # Debug log
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"파일 저장 실패: {str(e)}"
         )
     
     # 4. DB 업데이트
+    # 저장된 위치를 기준으로 상대 경로 저장 (또는 절대 경로)
+    # 여기서는 일관성을 위해 ./audio_storage/... 형식으로 저장하거나
+    # 실제 저장된 위치를 반영하는 것이 좋음.
+    # 하지만 기존 로직 유지를 위해 ./audio_storage/로 저장하되,
+    # get_meeting_audio에서 잘 찾도록 함.
     audio_url = f'./audio_storage/{meeting_id}.wav'
     db_meeting.AUDIO_URL = audio_url
     db_meeting.LOCATION = audio_url
