@@ -22,7 +22,7 @@
 | **팀장** | 권현재 | RAG 시스템, 저장소 관리, NCP Object Storage, ASR 모델링(유사 시) |
 | **백엔드 리드** | 김기찬 | STT, WebSocket 실시간 처리, User/Meeting CRUD, 인증 시스템 |
 | **Integration & LLM** | 정유현 | LLM 요약 분석, 외부 서비스 통합(Jira, Notion) |
-| **프론트엔드** | 서동현 | - |
+| **프론트엔드** | 서동현 | 발표 |
 | **프론트엔드** | 김선아 | - |
 
 ---
