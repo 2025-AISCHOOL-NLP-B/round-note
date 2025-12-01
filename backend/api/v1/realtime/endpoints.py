@@ -6,12 +6,7 @@ import logging
 import wave
 import os
 import time
-import struct
-import math
 
-from sqlalchemy.orm import Session
-from backend.database import get_db
-from backend.crud import meeting as meeting_crud
 from backend.dependencies import get_storage_service, get_llm_service, get_stt_service
 from backend.core.stt.service import STTService
 from backend.core.llm.service import LLMService
@@ -23,36 +18,28 @@ router = APIRouter()
 
 class TranscribeSettings:
     """번역, 요약 등 실시간 기능 활성화 상태를 저장하는 공유 객체"""
-    def __init__(self, translate: bool = False, summary: bool = False, meeting_id: str = None):
+    def __init__(self, translate: bool = False, summary: bool = False):
         self.translate = translate
         self.summary = summary
         self.is_paused = False  # 일시정지 상태 추가
-        self.meeting_id = meeting_id # 회의 ID 저장
-
+        
 # 메인 WebSocket 핸들러
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket, 
-    db: Session = Depends(get_db),
     storage_service: StorageService = Depends(get_storage_service), 
     stt_service: STTService = Depends(get_stt_service),
     llm_service: LLMService = Depends(get_llm_service),
     translate: bool = True, 
-    summary: bool = False,
-    channels: int = 1, # 클라이언트로부터 채널 수 요청 받음 (기본 1)
-    meetingId: str = None # 회의 ID (선택)
+    summary: bool = False
 ):
     """
     메인 WebSocket 핸들러, 클라이언트와 Deepgram 간의 중계 역할을 합니다.
-    
-    Args:
-        participants: 쉼표로 구분된 참여자 이름 (예: "김철수,이영희,박민수")
-                     STT 키워드 부스팅에 사용되어 이름 인식률 향상
     """
     await websocket.accept()
-    logging.info(f"React <-> FastAPI WebSocket 연결 수립됨. (요청 채널: {channels}, MeetingID: {meetingId})")
+    logging.info("React <-> FastAPI WebSocket 연결 수립됨.")
     
-    settings = TranscribeSettings(translate=translate, summary=summary, meeting_id=meetingId)
+    settings = TranscribeSettings(translate=translate, summary=summary)
     
     # 요약 관련 공유 상태
     summary_state = {
@@ -66,31 +53,11 @@ async def websocket_endpoint(
     }
     
     try:
-        # 요청된 채널 수에 맞춰 Deepgram URL 생성
-        dg_url, dg_headers = stt_service.get_realtime_stt_url(channels=channels)
-        
-        # meetingId가 있으면 해당 ID로 파일 생성, 없으면 랜덤 생성
-        # 파일 생성 시 사용된 ID를 file_id로 저장
-        file_id = meetingId
-        if file_id:
-            wave_file, file_path = storage_service.create_local_wave_file(meeting_id=file_id)
-        else:
-            # meetingId가 없으면 내부적으로 생성된 ID를 사용해야 함.
-            # create_local_wave_file이 ID를 반환하지 않으므로, 미리 생성해서 넘김
-            import ulid
-            file_id = str(ulid.new())
-            wave_file, file_path = storage_service.create_local_wave_file(meeting_id=file_id)
-            logging.info(f"Generated temporary file ID: {file_id}")
+        dg_url, dg_headers = stt_service.get_realtime_stt_url()
+        wave_file, file_path = storage_service.create_local_wave_file()
         
         # 2. Deepgram WebSocket에 연결
-        # [Fix] 연결 타임아웃을 30초로 연장하고 핑 설정을 최적화하여 핸드셰이크 실패 방지
-        async with websockets.connect(
-            dg_url, 
-            additional_headers=dg_headers,
-            open_timeout=30,
-            ping_interval=20, 
-            ping_timeout=20
-        ) as dg_websocket:
+        async with websockets.connect(dg_url, additional_headers=dg_headers) as dg_websocket:
             logging.info(f"Deepgram 연결 성공. 양방향 중계 시작.")
 
             # 3. 비동기 태스크 생성: React <-> Deepgram 양방향 중계
@@ -138,52 +105,9 @@ async def websocket_endpoint(
     finally:
         if wave_file:
             try:
-                # [Fix] 파일 닫기는 동기적으로 수행하여 헤더(RIFF) 기록 및 버퍼 플러시를 확실하게 보장
-                # 비동기(to_thread)로 처리 시 이벤트 루프 종료와 겹쳐 파일이 깨질 수 있음
-                wave_file.close()
+                await asyncio.to_thread(wave_file.close)
                 logging.info(f"🔴 WebSocket 핸들러 종료 및 파일 저장 완료: {file_path}")
                 
-                # 최종 Meeting ID 확인 (settings.meeting_id가 업데이트 되었을 수 있음)
-                final_meeting_id = settings.meeting_id if settings.meeting_id else file_id
-                
-                # 파일 이름 변경 로직 (임시 ID -> 실제 Meeting ID)
-                if final_meeting_id != file_id:
-                    try:
-                        dir_name = os.path.dirname(file_path)
-                        new_file_path = os.path.join(dir_name, f"{final_meeting_id}.wav")
-                        
-                        # 파일 이름 변경
-                        if os.path.exists(file_path):
-                            os.rename(file_path, new_file_path)
-                            logging.info(f"Renamed audio file: {file_path} -> {new_file_path}")
-                            file_path = new_file_path # 경로 업데이트
-                        else:
-                            logging.warning(f"Original file not found for rename: {file_path}")
-                            
-                    except Exception as e:
-                        logging.error(f"Failed to rename audio file: {e}")
-
-                # DB Update: meetingId가 있으면 오디오 경로 업데이트
-                if final_meeting_id:
-                    try:
-                        # Use relative path for portability
-                        relative_path = f"./audio_storage/{os.path.basename(file_path)}"
-                        
-                        # We need to run sync DB operation in async context
-                        def update_db():
-                            meeting = meeting_crud.get_meeting(db, final_meeting_id)
-                            if meeting:
-                                meeting.AUDIO_URL = relative_path
-                                meeting.LOCATION = relative_path
-                                db.commit()
-                                logging.info(f"Updated meeting {final_meeting_id} audio_url to {relative_path}")
-                            else:
-                                logging.warning(f"Meeting {final_meeting_id} not found for audio update")
-                        
-                        await asyncio.to_thread(update_db)
-                    except Exception as e:
-                        logging.error(f"Failed to update meeting audio URL: {e}")
-
                 # try:
                 #     logging.info("NCP Object Storage 업로드 시작...")
                 #     objecct_key = await storage_service.upload_to_ncp_object_stroage(file_path, meeting_id=os.path.basename(file_path).split('.')[0])
@@ -212,9 +136,6 @@ async def handle_client_uplink(
     React로부터 오디오 청크(bytes)와 제어 메시지(JSON/text)를 모두 받아 처리합니다.
     """
     logging.info("Uplink Handler: 오디오 및 제어 메시지 수신 시작.")
-    
-    chunk_count = 0
-    
     try:
         while True:
             # 1. [핵심] bytes, text 등 모든 유형의 메시지를 수신 (논블로킹 await)
@@ -225,50 +146,11 @@ async def handle_client_uplink(
                 audio_data = message["bytes"]
                 
                 if len(audio_data) > 0:
-                    chunk_count += 1
-                    
-                    # [Debug] 오디오 데이터 분석 (RMS 계산) - 50번째 청크마다 또는 데이터가 클 때
-                    if chunk_count % 50 == 0:
-                        try:
-                            # Int16 Stereo (2 bytes per sample, 2 channels)
-                            # L, R, L, R ...
-                            count = len(audio_data) // 2
-                            shorts = struct.unpack(f"<{count}h", audio_data)
-                            
-                            left_sum_sq = 0
-                            right_sum_sq = 0
-                            samples = count // 2
-                            
-                            for i in range(samples):
-                                l = shorts[i*2]
-                                r = shorts[i*2+1]
-                                left_sum_sq += l * l
-                                right_sum_sq += r * r
-                                
-                            left_rms = math.sqrt(left_sum_sq / samples) if samples > 0 else 0
-                            right_rms = math.sqrt(right_sum_sq / samples) if samples > 0 else 0
-                            
-                            logging.info(f"[AudioCheck] Chunk #{chunk_count}: Size={len(audio_data)} bytes. RMS(L)={left_rms:.2f}, RMS(R)={right_rms:.2f}")
-                            
-                            if right_rms == 0:
-                                logging.warning(f"[AudioCheck] ⚠️ Right Channel (System) is SILENT.")
-                            elif right_rms > 0:
-                                logging.info(f"[AudioCheck] ✅ Right Channel (System) has signal.")
-                                
-                        except Exception as e:
-                            logging.error(f"[AudioCheck] Error analyzing audio chunk: {e}")
-
                     await dg_ws.send(audio_data)
                     
                     # 일시정지 상태가 아닐 때만 파일에 저장
                     if not settings.is_paused:
                         try:
-                            # [Debug] 저장되는 오디오 데이터 크기 확인 (Stereo라면 16kHz * 2ch * 2bytes = 64000 bytes/sec)
-                            # 1초에 약 15~16번 전송되므로, 청크당 약 4096 bytes 정도여야 함 (Mono면 2048)
-                            # 하지만 프론트엔드 버퍼가 4096 샘플이면: 4096 * 2ch * 2bytes = 16384 bytes
-                            if len(audio_data) > 10000: # 큰 청크만 로그 (너무 자주 찍히지 않게)
-                                logging.debug(f"Writing audio chunk: {len(audio_data)} bytes")
-                                
                             await stoage_service.write_audio_chunk(wave_file, audio_data)
                         except Exception as e:
                             logging.warning(f"⚠️ 오디오 청크 로컬 쓰기 실패: {str(e)}")
@@ -295,12 +177,6 @@ async def handle_client_uplink(
                         logging.info(f"--> [CONTROL] 일시정지 상태 변경: {value} ({'일시정지' if value else '재개'})")
                         # 클라이언트에게 설정이 바뀌었음을 알리는 피드백 (선택적)
                         await client_ws.send_json({"type": "setting_update", "paused": value})
-                    
-                    elif command == "SET_MEETING_ID" and isinstance(value, str):
-                        settings.meeting_id = value
-                        logging.info(f"--> [CONTROL] Meeting ID 업데이트: {value}")
-                        await client_ws.send_json({"type": "setting_update", "meeting_id": value})
-                    
                     # (추후 "SET_SUMMARY" 등 다른 명령어도 여기서 처리)
                         
                 except json.JSONDecodeError:
@@ -355,16 +231,7 @@ async def forward_to_client(
                 # 2. 최종 텍스트 처리: 화자 정보와 함께 최종 문장 구성
                 words = result.get("channel", {}).get("alternatives", [{}])[0].get("words", [])
                 speaker_id = words[0].get("speaker") if words else None
-                
-                # 채널 정보 확인 (0: Mic, 1: System)
-                channel_index = result.get("channel_index", [0, 1])[0]
-                
-                if speaker_id is not None:
-                    prefix = "System" if channel_index == 1 else "Mic"
-                    speaker_tag = f"[{prefix} Speaker {speaker_id}] "
-                else:
-                    speaker_tag = ""
-
+                speaker_tag = f"[Speaker {speaker_id}] " if speaker_id is not None else ""
                 final_text = speaker_tag + transcript
                 
                 # 3. (React 전송) 최종 전사 텍스트를 React로 전송
@@ -542,23 +409,14 @@ async def get_translation_and_send(client_ws: WebSocket, text: str, llm_service:
         translated_text = await llm_service.get_translation(text)
         
         # 2. 번역 결과를 React로 전송 (논블로킹)
-        # [Fix] WebSocket 연결 상태 확인 후 전송
-        # 클라이언트가 연결을 끊은 후에도 번역 태스크가 완료되어 전송을 시도하면 RuntimeError 발생
-        if client_ws.client_state.name == "CONNECTED":
-            await client_ws.send_json({
-                "type": "translation",
-                "original_text": text,
-                "translated_text": translated_text
-            })
-            logging.info(f"Translation Task Finished for: {text}")
-        else:
-            logging.warning(f"Translation finished but client disconnected. Skipping send for: {text}")
+        await client_ws.send_json({
+            "type": "translation",
+            "original_text": text,
+            "translated_text": translated_text
+        })
+        logging.info(f"Translation Task Finished for: {text}")
         
     except Exception as e:
         logging.error(f"OpenAI 번역 오류: {e}")
-        # 오류 발생 시 클라이언트에게 알림 (연결된 경우에만)
-        try:
-            if client_ws.client_state.name == "CONNECTED":
-                await client_ws.send_json({"type": "error", "message": f"Translation failed: {e}"})
-        except Exception:
-            pass
+        # 오류 발생 시 클라이언트에게 알림
+        await client_ws.send_json({"type": "error", "message": f"Translation failed: {e}"})
