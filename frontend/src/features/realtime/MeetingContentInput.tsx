@@ -653,7 +653,6 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
           {/* 실시간 전사 탭 */}
           {activeTab === 'transcribe' && (
             <div>
-              
               {/* 녹취 컨트롤 버튼 */}
               <div className="mb-4 flex gap-2 justify-center">
                 <Button
