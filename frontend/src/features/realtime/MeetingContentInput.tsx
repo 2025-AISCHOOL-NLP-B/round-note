@@ -23,6 +23,7 @@ import {
   Edit3,
   ChevronDown,
   Check,
+  CheckSquare,
   FileText,
   Brain,
   Languages,
@@ -417,19 +418,19 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
           retryCount++;
           console.log(`Retrying analysis (${retryCount}/${maxRetries})...`);
           toast.info(`네트워크 오류. ${retryCount}번째 재시도 중... (${retryCount}/${maxRetries})`);
-          
+
           // 지수 백오프: 1초, 2초, 4초
           await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount - 1) * 1000));
           return performAnalysis();
         }
 
         // 최대 재시도 횟수 초과 또는 다른 오류
-        const msg = isTimeoutError 
-          ? '분석 요청 시간이 초과되었습니다.' 
-          : (isNetworkError 
+        const msg = isTimeoutError
+          ? '분석 요청 시간이 초과되었습니다.'
+          : (isNetworkError
             ? '네트워크 연결을 확인해주세요.'
             : (error?.message || 'AI 분석 중 오류가 발생했습니다.'));
-        
+
         setAnalysisError(msg);
         toast.error(msg);
         throw error;
@@ -473,15 +474,11 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
       } else {
         // 1) 회의 종료/내용 저장
         await endMeeting(currentMeetingId, { status: 'COMPLETED', ended_at: new Date().toISOString(), content });
-        // 2) 요약 재생성
-        const regen = await regenerateSummary(currentMeetingId);
-        // 3) UI 반영
-        setAiAnalysis({ summary: regen.summary, actionItems: regen.action_items_count });
-        toast.success('회의록이 저장되고 AI 요약이 생성되었습니다.');
+        toast.success('회의가 저장되었습니다.');
       }
     } catch (err) {
       console.error('Saving content / regenerating summary failed:', err);
-      toast.error('회의 저장 또는 요약 생성 중 오류가 발생했습니다.');
+      toast.error('회의 저장 중 오류가 발생했습니다.');
     }
 
     // 최종 UI 정리
@@ -944,16 +941,16 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
         </Alert>
       )}
 
-      {/* AI Analysis Prompt */}
+      {/* 액션 아이템 생성 */}
       {content && !aiAnalysis && (
         <Card className="mb-4 border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50">
           <CardContent className="p-4">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
               <div className="flex items-start gap-2">
-                <Brain className="w-5 h-5 text-primary shrink-0 mt-0.5" />
+                <CheckSquare className="w-5 h-5 text-primary shrink-0 mt-0.5" />
                 <div>
-                  <p className="text-sm font-medium text-slate-800">AI 분석 준비 완료</p>
-                  <p className="text-xs text-slate-600">회의 내용을 분석하여 요약과 액션 아이템을 추출합니다</p>
+                  <p className="text-sm font-medium text-slate-800">액션 아이템 생성</p>
+                  <p className="text-xs text-slate-600">회의 내용에서 실행 항목을 추출합니다</p>
                 </div>
               </div>
               <Button
@@ -970,7 +967,7 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4" />
-                    AI 분석 시작
+                    액션 아이템 생성
                   </>
                 )}
               </Button>
@@ -979,7 +976,7 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
         </Card>
       )}
 
-      {/* AI Analysis Results */}
+      {/* 액션 아이템 결과 */}
       {aiAnalysis && (
         <Card className="mb-4 border-green-200 bg-gradient-to-r from-green-50 to-emerald-50">
           <CardHeader className="pb-3">
