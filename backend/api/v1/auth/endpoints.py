@@ -13,6 +13,21 @@ from backend.core.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+def get_cookie_params():
+    """
+    환경에 따른 쿠키 설정 반환
+    Render 등 배포 환경에서는 SameSite=None, Secure=True 필수
+    """
+    env = os.getenv("ENVIRONMENT", "development")
+    # RENDER 환경변수가 있거나 ENVIRONMENT가 production이면 배포 환경으로 간주
+    is_production = env == "production" or os.getenv("RENDER") is not None
+    
+    return {
+        "httponly": True,
+        "secure": is_production,
+        "samesite": "none" if is_production else "lax"
+    }
+
 router = APIRouter()
 
 # OAuth 설정
@@ -33,7 +48,7 @@ def register_user(user: user_schema.UserCreate, response: Response, db: Session 
     """새로운 사용자를 등록하고 자동으로 로그인 토큰을 발급합니다."""
     logger.info("User registration attempt", extra={
         "email": user.email,
-        "name": user.name,
+        "user_name": user.name,
         "action": "register"
     })
 
@@ -57,14 +72,13 @@ def register_user(user: user_schema.UserCreate, response: Response, db: Session 
     token = security.create_access_token({"sub": db_user.USER_ID, "email": db_user.EMAIL})
 
     # httpOnly Cookie에 토큰 설정 (브라우저용)
-    is_production = os.getenv("ENVIRONMENT", "development") == "production"
+    cookie_params = get_cookie_params()
+    
     response.set_cookie(
         key="access_token",
         value=token,
-        httponly=True,
-        secure=is_production,
-        samesite="lax",
-        max_age=7200  # 2시간
+        max_age=7200,  # 2시간
+        **cookie_params
     )
     
     # 리프레시 토큰도 발급
@@ -72,10 +86,8 @@ def register_user(user: user_schema.UserCreate, response: Response, db: Session 
     response.set_cookie(
         key="refresh_token",
         value=refresh_token,
-        httponly=True,
-        secure=is_production,
-        samesite="lax",
-        max_age=604800  # 7일
+        max_age=604800,  # 7일
+        **cookie_params
     )
 
     # 응답 body에도 토큰 포함 (API 테스트 및 모바일 앱용)
@@ -120,15 +132,13 @@ def login_for_access_token(form_data: user_schema.UserLogin, response: Response,
     })
 
     # httpOnly Cookie에 토큰 설정 (브라우저용)
-    is_production = os.getenv("ENVIRONMENT", "development") == "production"
-    samesite_value = "none" if is_production else "lax"
+    cookie_params = get_cookie_params()
+    
     response.set_cookie(
         key="access_token",
         value=token,
-        httponly=True,
-        secure=is_production,  # 프로덕션에서만 HTTPS 강제, 개발환경에선 HTTP 허용
-        samesite=samesite_value,  # 프로덕션에서는 "none"으로 크로스 도메인 허용
-        max_age=7200  # 2시간
+        max_age=7200,  # 2시간
+        **cookie_params
     )
     
     # 리프레시 토큰도 발급
@@ -136,10 +146,8 @@ def login_for_access_token(form_data: user_schema.UserLogin, response: Response,
     response.set_cookie(
         key="refresh_token",
         value=refresh_token,
-        httponly=True,
-        secure=is_production,
-        samesite=samesite_value,
-        max_age=604800  # 7일
+        max_age=604800,  # 7일
+        **cookie_params
     )
 
     # 응답 body에도 토큰 포함 (API 테스트 및 모바일 앱용)
@@ -179,7 +187,7 @@ async def google_callback(request: Request, db: Session = Depends(get_db)):
             raise HTTPException(status_code=400, detail="사용자 정보를 가져올 수 없습니다.")
 
         email = user_info.get('email')
-        name = user_info.get('name', email.split('@')[0])
+        user_name = user_info.get('name', email.split('@')[0])
 
         db_user = user_crud.get_user_by_email(db, email)
         if not db_user:
@@ -188,7 +196,7 @@ async def google_callback(request: Request, db: Session = Depends(get_db)):
             db_user = models.User(
                 EMAIL=email,
                 PW=security.get_password_hash(random_password),
-                NAME=name,
+                NAME=user_name,
                 STATUS='A'
             )
             db.add(db_user)
@@ -201,19 +209,14 @@ async def google_callback(request: Request, db: Session = Depends(get_db)):
         is_local = 'localhost' in host or '127.0.0.1' in host
         frontend_url = 'http://localhost:3000' if is_local else os.getenv('CORS_ORIGIN', 'https://round-note-web.onrender.com')
 
-        is_production = os.getenv("ENVIRONMENT", "development") == "production"
-        
-        # 배포 환경에서는 쿠키가 크로스 도메인으로 전송되어야 하므로 samesite="none", secure=True 필요
-        samesite_value = "none" if is_production else "lax"
+        cookie_params = get_cookie_params()
         
         response = RedirectResponse(url=f"{frontend_url}/main")
         response.set_cookie(
             key="access_token",
             value=access_token,
-            httponly=True,
-            secure=is_production,  # 프로덕션에서만 HTTPS 강제
-            samesite=samesite_value,  # 프로덕션에서는 "none"으로 크로스 도메인 허용
-            max_age=7200  # 2시간
+            max_age=7200,  # 2시간
+            **cookie_params
         )
         
         # 리프레시 토큰도 발급
@@ -221,13 +224,11 @@ async def google_callback(request: Request, db: Session = Depends(get_db)):
         response.set_cookie(
             key="refresh_token",
             value=refresh_token,
-            httponly=True,
-            secure=is_production,
-            samesite=samesite_value,
-            max_age=604800  # 7일
+            max_age=604800,  # 7일
+            **cookie_params
         )
         
-        print(f"[DEBUG] 쿠키 설정 완료 - samesite={samesite_value}, secure={is_production}")
+        print(f"[DEBUG] 쿠키 설정 완료 - {cookie_params}")
         return response
 
     except Exception as e:
@@ -298,16 +299,12 @@ def refresh_access_token(request: Request, response: Response, db: Session = Dep
     # 새로운 액세스 토큰 발급
     new_access_token = security.create_access_token({"sub": user.USER_ID, "email": user.EMAIL})
     
-    is_production = os.getenv("ENVIRONMENT", "development") == "production"
-    samesite_value = "none" if is_production else "lax"
-    
+    cookie_params = get_cookie_params()
     response.set_cookie(
         key="access_token",
         value=new_access_token,
-        httponly=True,
-        secure=is_production,
-        samesite=samesite_value,
-        max_age=7200  # 2시간
+        max_age=7200,  # 2시간
+        **cookie_params
     )
     
     logger.info("Token refreshed successfully", extra={
@@ -336,13 +333,13 @@ def logout(response: Response, current_user: models.User = Depends(get_current_u
     print(f"[DEBUG] 로그아웃 - USER_ID: {current_user.USER_ID}, Email: {current_user.EMAIL}")
     
     # httpOnly Cookie 삭제 (환경에 맞게 samesite 설정)
-    is_production = os.getenv("ENVIRONMENT", "development") == "production"
-    samesite_value = "none" if is_production else "lax"
+    cookie_params = get_cookie_params()
+    
     response.delete_cookie(
         key="access_token",
         httponly=True,
-        secure=is_production,
-        samesite=samesite_value
+        secure=cookie_params["secure"],
+        samesite=cookie_params["samesite"]
     )
     
     return {"message": "로그아웃되었습니다."}
