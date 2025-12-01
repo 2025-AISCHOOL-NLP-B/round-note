@@ -3,7 +3,7 @@ import { useRouter } from 'next/navigation';
 import { MeetingInfoInput } from '@/features/meetings/MeetingInfoInput';
 import { MeetingContentInput } from './MeetingContentInput';
 import type { Meeting } from '@/features/dashboard/Dashboard';
-import { createMeeting, endMeeting, type MeetingResponse } from '@/features/meetings/meetingsService';
+import { createMeeting, updateMeeting, endMeeting, type MeetingResponse } from '@/features/meetings/meetingsService';
 import { toast } from 'sonner';
 
 interface MeetingStartProps {
@@ -19,34 +19,45 @@ export function MeetingStart({ meetings, onAddMeeting }: MeetingStartProps) {
   const [createdMeetingId, setCreatedMeetingId] = useState<string | null>(null);
 
   // 회의 전사 완료 시
-  const handleContentComplete = (content: string, analysis?: any) => {
+  const handleContentComplete = (content: string, analysis?: any, meetingId?: string | null) => {
     setTranscribedContent(content);
     setAiAnalysis(analysis);
+    if (meetingId) {
+      setCreatedMeetingId(meetingId);
+    }
     setCurrentStep('info');
   };
 
   // 정보 입력 완료 시 - 최종 저장
   const handleInfoComplete = async (info: { title: string; date: string; purpose: string; participants: string[] }) => {
-    // 1. 백엔드에 회의 생성 요청
+    // 1. 백엔드에 회의 생성/업데이트 요청
     toast.info('회의를 저장하는 중...');
     
     let meetingData;
     try {
-      meetingData = await createMeeting({
-        title: info.title,
-        purpose: info.purpose,
-        is_realtime: true,
-      });
-
-      // 2. 생성된 회의 ID 저장
-      setCreatedMeetingId(meetingData.meeting_id);
+      if (createdMeetingId) {
+        // 기존 회의 업데이트
+        meetingData = await updateMeeting(createdMeetingId, {
+          title: info.title,
+          purpose: info.purpose,
+        });
+      } else {
+        // 회의 생성 (fallback)
+        meetingData = await createMeeting({
+          title: info.title,
+          purpose: info.purpose,
+          is_realtime: true,
+        });
+        setCreatedMeetingId(meetingData.meeting_id);
+      }
     } catch (createError) {
-      console.error('[MeetingStart] Failed to create meeting:', createError);
-      toast.error('회의 생성에 실패했습니다.');
+      console.error('[MeetingStart] Failed to create/update meeting:', createError);
+      toast.error('회의 저장에 실패했습니다.');
       return;
     }
 
-    // 3. 오디오 파일 업로드
+    // 3. 오디오 파일 업로드 (WebSocket에서 이미 고품질 오디오가 저장되므로 프론트엔드 업로드 생략)
+    /*
     if (aiAnalysis?.audioBlob) {
       try {
         const formData = new FormData();
@@ -75,6 +86,7 @@ export function MeetingStart({ meetings, onAddMeeting }: MeetingStartProps) {
         toast.warning('오디오 파일 업로드 중 오류가 발생했습니다.');
       }
     }
+    */
 
     // 4. 회의 종료 + LLM 처리를 위한 헬퍼 함수들
     const extractActionItems = (text: string) => {
@@ -140,6 +152,18 @@ export function MeetingStart({ meetings, onAddMeeting }: MeetingStartProps) {
     let summary = '';
     let actionItems: any[] = [];
     let audioUrl = '';    try {
+      const endBody: any = {
+        status: 'COMPLETED',
+        ended_at: new Date().toISOString(),
+        content: transcribedContent,
+      };
+
+      // 기존에 생성된 회의가 없어서 새로 만든 경우에만 audio_url을 추측해서 보냄
+      // (기존 회의가 있었다면 WebSocket이 이미 audio_url을 설정했을 것이므로 덮어쓰지 않음)
+      if (!createdMeetingId) {
+         endBody.audio_url = `./audio_storage/${meetingData.meeting_id}.wav`;
+      }
+
       const endResponse = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL}/api/v1/meetings/${meetingData.meeting_id}/end`,
         {
@@ -148,12 +172,7 @@ export function MeetingStart({ meetings, onAddMeeting }: MeetingStartProps) {
             'Content-Type': 'application/json',
           },
           credentials: 'include', // httpOnly Cookie 전송
-          body: JSON.stringify({
-            status: 'COMPLETED',
-            ended_at: new Date().toISOString(),
-            content: transcribedContent,
-            audio_url: `./audio_storage/${meetingData.meeting_id}.wav`
-          }),
+          body: JSON.stringify(endBody),
         }
       );
       
