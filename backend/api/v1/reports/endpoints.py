@@ -379,9 +379,28 @@ async def get_full_report(
 # ============================================
 # 4. 요약 재생성 (LLM 서비스 사용) ⭐
 # ============================================
+
+class TemplateSectionInput(BaseModel):
+    """템플릿 섹션"""
+    id: str
+    title: str
+    placeholder: str = ""
+
+class TemplateInput(BaseModel):
+    """템플릿 정보"""
+    id: str
+    name: str
+    description: str = ""
+    sections: List[TemplateSectionInput]
+
+class RegenerateRequest(BaseModel):
+    """요약 재생성 요청"""
+    template: Optional[TemplateInput] = None
+
 @router.post("/{meeting_id}/regenerate")
 async def regenerate_summary(
     meeting_id: str,
+    request: RegenerateRequest = None,
     db: Session = Depends(get_db)
 ):
     """
@@ -424,7 +443,18 @@ async def regenerate_summary(
         transcript_texts = [meeting.CONTENT]
         
         # LLM으로 요약 및 액션 아이템 생성
-        result = await llm_service.get_summary_and_actions(transcript_texts)
+        # 템플릿이 있으면 템플릿 기반 요약 생성
+        template_dict = None
+        if request and request.template:
+            template_dict = {
+                "name": request.template.name,
+                "sections": [
+                    {"title": s.title, "placeholder": s.placeholder}
+                    for s in request.template.sections
+                ]
+            }
+        
+        result = await llm_service.get_summary_and_actions(transcript_texts, template=template_dict)
         
         # === 요약 업데이트/생성 ===
         summary = db.query(models.Summary).filter(
