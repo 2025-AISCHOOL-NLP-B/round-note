@@ -123,14 +123,28 @@ export const getMeeting = async (meetingId: string): Promise<MeetingResponse> =>
  * 회의 수정
  */
 export const updateMeeting = async (meetingId: string, data: UpdateMeetingRequest): Promise<MeetingResponse> => {
-  const response = await fetch(`${API_URL}/api/v1/meetings/${meetingId}`, getFetchOptions({
-    method: 'PUT',
-    headers: getHeaders(),
-    body: JSON.stringify(data),
-  }));
+  console.log('[meetingsService] updateMeeting called with:', { meetingId, data, API_URL });
+  
+  try {
+    const url = `${API_URL}/api/v1/meetings/${meetingId}`;
+    console.log('[meetingsService] Fetching URL:', url);
+    
+    const response = await fetch(url, getFetchOptions({
+      method: 'PUT',
+      headers: getHeaders(),
+      body: JSON.stringify(data),
+    }));
+    
+    console.log('[meetingsService] Response status:', response.status);
+    console.log('[meetingsService] Response ok:', response.ok);
 
-  await handleResponse(response);
-  return response.json();
+    await handleResponse(response);
+    return response.json();
+  } catch (error) {
+    console.error('[meetingsService] updateMeeting error:', error);
+    console.error('[meetingsService] Error type:', error instanceof Error ? error.constructor.name : typeof error);
+    throw error;
+  }
 };
 
 /**
