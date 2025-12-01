@@ -46,16 +46,17 @@ class STTService:
         # TODO: (Team Member B) Initialize ElevenLabs client (for batch STT)
     
     @api_retry_stt
-    def get_realtime_stt_url(self, channels: int = 1) -> tuple[str, dict]:
+    def get_realtime_stt_url(self, channels: int = 1, sample_rate: int = 16000) -> tuple[str, dict]:
         """
         Returns the URL and headers required for FastAPI to connect to the Deepgram WebSocket.
         
         Auto-retry: Retries up to 3 times on network errors.
         """
-        logger.debug(f"Generating Deepgram WebSocket URL (Channels: {channels})", extra={"service": "stt"})
+        logger.debug(f"Generating Deepgram WebSocket URL (Channels: {channels}, SampleRate: {sample_rate}Hz)", extra={"service": "stt"})
             
-        # 동적으로 채널 수 설정
-        params = self.DEEPGRAM_PARAMS + f"&channels={channels}"
+        # 동적으로 채널 수와 샘플레이트 설정
+        # DEEPGRAM_PARAMS에서 sample_rate=16000 제거하고 동적으로 설정
+        params = self.DEEPGRAM_PARAMS.replace("&sample_rate=16000", "") + f"&channels={channels}&sample_rate={sample_rate}"
         
         full_url = self.DEEPGRAM_BASE_URL + params
         headers = {"Authorization": f"Token {self.DEEPGRAM_API_KEY}"}
@@ -63,7 +64,8 @@ class STTService:
         logger.debug("WebSocket URL generated", extra={
             "service": "stt",
             "url": self.DEEPGRAM_BASE_URL,
-            "channels": channels
+            "channels": channels,
+            "sample_rate": sample_rate
         })
         
         return full_url, headers
