@@ -20,15 +20,19 @@ export function MeetingInfoInput({ initialInfo, meetings, onComplete }: MeetingI
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     let finalTitle = title.trim();
-    
-    // 제목이 없으면 자동 생성
+
+    // 제목이 없으면 날짜 기반으로 자동 생성
     if (!finalTitle) {
-      // 해당 날짜의 회의 개수 계산
-      const meetingsOnDate = meetings.filter(m => m.date === date);
-      const count = meetingsOnDate.length + 1;
-      finalTitle = `${date} 회의(${count})`;
+      // 날짜가 있으면 그대로 제목으로 사용
+      if (date) {
+        finalTitle = `${date} 회의`;
+      } else {
+        // 날짜가 없으면 오늘 날짜를 기본값으로 사용
+        const today = new Date();
+        finalTitle = today.toISOString().split('T')[0] + ' 회의';
+      }
     }
 
     // 참석자를 배열로 변환 (쉼표로 구분)
@@ -37,8 +41,8 @@ export function MeetingInfoInput({ initialInfo, meetings, onComplete }: MeetingI
       .map(p => p.trim())
       .filter(p => p.length > 0);
 
-    onComplete({ 
-      title: finalTitle, 
+    onComplete({
+      title: finalTitle,
       date,
       purpose: purpose.trim(),
       participants: participantsList
@@ -106,7 +110,7 @@ export function MeetingInfoInput({ initialInfo, meetings, onComplete }: MeetingI
       <div className="bg-gradient-to-br from-primary/10 to-purple-100 border border-primary/20 rounded-xl p-4">
         <h4 className="text-sm mb-2 text-primary">💡 안내</h4>
         <p className="text-sm text-foreground/80">
-          회의 정보를 확인하고 수정해주세요. 제목을 입력하지 않으면 자동으로 생성됩니다.
+          회의 정보를 확인하고 수정해주세요. 제목을 입력하지 않으면 날짜 기반으로 자동 생성됩니다.
         </p>
       </div>
 

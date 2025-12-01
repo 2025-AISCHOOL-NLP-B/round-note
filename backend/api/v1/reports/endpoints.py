@@ -3,17 +3,57 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
 import ulid
+from datetime import datetime
 
 from backend.dependencies import get_db, get_current_user
 from backend import models
 from backend.schemas.report import SummaryOut, ActionItemOut, ReportOut
 from backend.core.llm.service import LLMService
 from backend.core.integrations import JiraService, NotionService
+from backend.core.auth.encryption import decrypt_data
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
-# 외부 연동 서비스 (Notion만 초기화, Jira는 사용자별로 초기화)
-notion = NotionService()
+
+# ============================================
+# 0. 실시간 요약 미리보기 (DB 저장 없음)
+# ============================================
+class PreviewSummaryRequest(BaseModel):
+    """실시간 요약 요청 (DB 저장 없이 content만 분석)"""
+    content: str
+
+@router.post("/preview-summary")
+async def preview_summary(
+    payload: PreviewSummaryRequest,
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    실시간 요약 생성 (DB 저장 없음)
+    
+    - 녹음 중 임시 content를 받아서 LLM으로 요약만 생성
+    - DB에 저장하지 않고 응답만 반환
+    - 액션 아이템 생성하지 않음 (요약만)
+    """
+    if not payload.content or not payload.content.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Content is required"
+        )
+    
+    try:
+        llm_service = LLMService()
+        # 간단한 요약 생성 (액션 아이템 제외)
+        summary_text = await llm_service.get_simple_summary(payload.content)
+        
+        return {
+            "summary": summary_text,
+            "cached": False
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate preview summary: {str(e)}"
+        )
 
 
 # ============================================
@@ -483,6 +523,16 @@ async def regenerate_summary(
         
         # 새 액션 아이템 생성
         for item_data in result["action_items"]:
+            # 마감일 파싱
+            deadline_str = item_data.get("deadline")
+            due_dt = None
+            if deadline_str and deadline_str != "미정":
+                try:
+                    # YYYY-MM-DD 형식 파싱
+                    due_dt = datetime.strptime(deadline_str, "%Y-%m-%d")
+                except ValueError:
+                    pass
+
             action_item = models.ActionItem(
                 ITEM_ID=str(ulid.new()),
                 MEETING_ID=meeting_id,
@@ -490,8 +540,9 @@ async def regenerate_summary(
                 DESCRIPTION=item_data.get("task", ""),  # task를 description으로도 사용
                 STATUS="PENDING",
                 PRIORITY="MEDIUM",
-                ASSIGNEE_ID=None,  # TODO: 담당자 매핑 필요
-                DUE_DT=None  # TODO: deadline 파싱 필요
+                ASSIGNEE_ID=None,
+                ASSIGNEE_NAME=item_data.get("assignee"),
+                DUE_DT=due_dt
             )
             db.add(action_item)
         
@@ -681,6 +732,7 @@ async def translate_meeting_content(
 class JiraSyncRequest(BaseModel):
     """Request body for Jira sync."""
     project_key: str
+    item_ids: Optional[List[str]] = None
 
 @router.post("/{meeting_id}/action-items/to-jira")
 async def push_action_items_to_jira(
@@ -696,6 +748,7 @@ async def push_action_items_to_jira(
     - 새 항목은 생성
     - priority, due_date 필드 매핑
     - 부분 실패 처리 (일부 성공 시에도 결과 반환)
+    - item_ids가 제공되면 해당 ID의 항목만 동기화
     """
     project_key = request.project_key
     from backend.core.auth.encryption import decrypt_data
@@ -737,14 +790,19 @@ async def push_action_items_to_jira(
     )
     
     # 액션 아이템 조회
-    action_items = db.query(models.ActionItem).filter(
+    query = db.query(models.ActionItem).filter(
         models.ActionItem.MEETING_ID == meeting_id
-    ).all()
+    )
+    
+    if request.item_ids:
+        query = query.filter(models.ActionItem.ITEM_ID.in_(request.item_ids))
+        
+    action_items = query.all()
     
     if not action_items:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No action items found for this meeting"
+            detail="No action items found for this meeting (or none matched the provided IDs)"
         )
     
     # 동기화 결과 추적
@@ -844,9 +902,33 @@ async def push_action_items_to_jira(
 @router.post("/{meeting_id}/report/to-notion")
 async def push_report_to_notion(
     meeting_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
 ):
     """전체 보고서를 Notion으로 전송"""
+    
+    # 사용자 Notion 설정 조회
+    user_id = current_user.USER_ID
+    notion_setting = db.query(models.UserIntegrationSetting).filter(
+        models.UserIntegrationSetting.USER_ID == user_id,
+        models.UserIntegrationSetting.PLATFORM == "notion"
+    ).first()
+    
+    if not notion_setting:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Notion not configured. Please set up Notion integration in settings."
+        )
+    
+    # Notion 설정 복호화
+    config = notion_setting.CONFIG
+    decrypted_token = decrypt_data(config["api_token"])
+    
+    notion = NotionService(
+        api_token=decrypted_token,
+        parent_page_id=config.get("parent_page_id"),
+        database_id=config.get("database_id")
+    )
     
     summary = db.query(models.Summary).filter(
         models.Summary.MEETING_ID == meeting_id
@@ -880,9 +962,14 @@ async def push_report_to_notion(
 # ============================================
 # 8. Notion 포괄적 회의록 (멘토 피드백 반영) ⭐
 # ============================================
+
+class NotionExportRequest(BaseModel):
+    parent_page_id: Optional[str] = None
+
 @router.post("/{meeting_id}/notion/comprehensive")
 async def push_comprehensive_report_to_notion(
     meeting_id: str,
+    request: NotionExportRequest,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
@@ -895,6 +982,9 @@ async def push_comprehensive_report_to_notion(
     - ⚡ 액션 아이템 (담당자, 마감일)
     
     날짜 형식: 2024년 11월 25일 (월) 14:00 - 15:30
+    
+    Request Body:
+    - parent_page_id: 페이지를 생성할 부모 페이지 ID (optional)
     """
     from backend.core.integrations.notion_service import Participant
     
@@ -942,7 +1032,31 @@ async def push_comprehensive_report_to_notion(
         )
     ]
     
-    # 5. Notion 페이지 생성
+    # 5. 사용자 Notion 설정 조회
+    user_id = current_user.USER_ID
+    notion_setting = db.query(models.UserIntegrationSetting).filter(
+        models.UserIntegrationSetting.USER_ID == user_id,
+        models.UserIntegrationSetting.PLATFORM == "notion"
+    ).first()
+    
+    if not notion_setting:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Notion not configured. Please set up Notion integration in settings."
+        )
+    
+    # Notion 설정 복호화
+    config = notion_setting.CONFIG
+    decrypted_token = decrypt_data(config["api_token"])
+    
+    # 요청에서 받은 parent_page_id 사용
+    notion = NotionService(
+        api_token=decrypted_token,
+        parent_page_id=request.parent_page_id,
+        database_id=None
+    )
+    
+    # 6. Notion 페이지 생성
     try:
         result = notion.create_comprehensive_meeting_page(
             meeting_title=meeting.TITLE or f"회의 {meeting_id}",
@@ -979,7 +1093,7 @@ async def push_comprehensive_report_to_notion(
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Notion 설정 오류: {str(e)}. 환경 변수를 확인하세요."
+            detail=f"Notion 설정 오류: {str(e)}"
         )
     except Exception as e:
         raise HTTPException(
@@ -991,17 +1105,49 @@ async def push_comprehensive_report_to_notion(
 # ============================================
 # 9. Notion 액션 아이템만 Tasks DB에 추가
 # ============================================
+
+class NotionActionItemsRequest(BaseModel):
+    database_id: Optional[str] = None
+
 @router.post("/{meeting_id}/notion/action-items")
 async def push_action_items_to_notion_db(
     meeting_id: str,
+    request: NotionActionItemsRequest,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
     """
     액션 아이템만 Notion Tasks 데이터베이스에 추가
     
-    환경 변수 필요: NOTION_DATABASE_ID
+    사용자의 Notion 설정 필요
+    
+    Request Body:
+    - database_id: 액션 아이템을 추가할 데이터베이스 ID (optional)
     """
+    
+    # 사용자 Notion 설정 조회
+    user_id = current_user.USER_ID
+    notion_setting = db.query(models.UserIntegrationSetting).filter(
+        models.UserIntegrationSetting.USER_ID == user_id,
+        models.UserIntegrationSetting.PLATFORM == "notion"
+    ).first()
+    
+    if not notion_setting:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Notion not configured. Please set up Notion integration in settings."
+        )
+    
+    # Notion 설정 복호화
+    config = notion_setting.CONFIG
+    decrypted_token = decrypt_data(config["api_token"])
+    
+    # 요청에서 받은 database_id 사용
+    notion = NotionService(
+        api_token=decrypted_token,
+        parent_page_id=None,
+        database_id=request.database_id
+    )
     
     # 회의 확인
     meeting = db.query(models.Meeting).filter(
@@ -1050,7 +1196,7 @@ async def push_action_items_to_notion_db(
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Notion 설정 오류: {str(e)}. NOTION_DATABASE_ID를 확인하세요."
+            detail=f"Notion 설정 오류: {str(e)}"
         )
     except Exception as e:
         raise HTTPException(

@@ -4,8 +4,12 @@ from sqlalchemy.orm import sessionmaker
 import dotenv
 from typing import Generator
 from sqlalchemy.orm import Session
+from pathlib import Path
 
-dotenv.load_dotenv()
+# backend/.env 파일 로드 (루트 디렉토리 기준)
+# Docker 환경에서는 이미 환경 변수가 설정되어 있으므로 override=False 사용
+env_path = Path(__file__).parent / ".env"
+dotenv.load_dotenv(dotenv_path=env_path, override=False)
 
 # 1. .env에서 DB URL 로드
 DATABASE_URL = os.environ.get("DATABASE_URL")

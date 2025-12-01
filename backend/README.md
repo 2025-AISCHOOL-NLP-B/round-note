@@ -665,7 +665,7 @@ logger.error("LLM 요약 오류: %s", str(e))
 - [x] **추가 인증 기능**
   - [x] GET /auth/me (JWT 토큰 기반 현재 사용자 정보)
   - [x] POST /auth/logout (로그아웃 처리)
-  - [ ] 보안 개선 (localStorage → httpOnly Cookie)
+  - [x] 보안 개선 (localStorage → httpOnly Cookie)
 
 - [X] **회의 저장 통합**
   - [X] 회의 종료 시 전사 내용(CONTENT), AI 분석(AI_SUMMARY) DB 저장
@@ -688,19 +688,26 @@ logger.error("LLM 요약 오류: %s", str(e))
 
 ### 2️⃣ 권현재 (팀장) - 병렬 진행 (우선순위순)
 
-**Phase 2A (1-2일) - 즉시 병렬 (김기찬 기다리지 말 것)**
+**Phase 2A (1-2일)**
 
 - [x] **Meeting/Summary/ActionItem CRUD 완성**
   - [x] `crud/meeting.py` - create_meeting, get_meeting, list_meetings, update_meeting, delete_meeting
   - [x] `crud/summary.py` - create_summary, get_summary_by_meeting, update_summary
   - [x] `crud/action_item.py` - create_action_item, get_action_items_by_meeting, update_action_item
+  
+  - [x] 더미 데이터로 CRUD 함수 단위 테스트 (tests/test_crud.py)
+
+- [ ] **Pydantic 스키마 확장**
+  - [x] `schemas/meeting.py` - 완성 (생성/조회/수정 스키마 분리)
+  - [x] `schemas/report.py` - ActionItemOut, SummaryOut 완성
+  - [ ] 팀원들과 스키마 협의
+=======
   - [ ] 더미 데이터로 CRUD 함수 단위 테스트 (tests/test_crud.py)
 
 - [x] **Pydantic 스키마 확장**
   - [x] `schemas/meeting.py` - 완성 (생성/조회/수정 스키마 분리)
   - [x] `schemas/report.py` - ActionItemOut, SummaryOut 완성
   - [x] 팀원들과 스키마 협의
-
 **Phase 2B (2-3일) - 병렬, 더미 데이터 사용**
 
 - [ ] **LangChain + RAG 파이프라인 (프로토타입)**

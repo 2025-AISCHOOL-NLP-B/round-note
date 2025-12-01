@@ -7,10 +7,18 @@ import { MessageSquare, X, Minus } from 'lucide-react';
 import type { Meeting } from '@/features/dashboard/Dashboard';
 
 export default function MeetingChat({ meeting, open, onOpen, onClose }: { meeting?: Meeting; open?: boolean; onOpen?: () => void; onClose?: () => void }) {
-  const [messages, setMessages] = useState<Array<{ id: string; sender: 'user' | 'bot'; text: string; time: string }>>([{
-    id: '1', sender: 'bot', text: `안녕하세요! 회의 관련 도우미입니다. 회의 내용을 질문해보세요.`, time: new Date().toISOString()
+  const [messages, setMessages] = useState<Array<{ id: string; sender: 'user' | 'bot'; text: string; time: string; sources?: Array<{ embedding_id?: string; text: string; similarity?: number }> }>>([{
+    id: '1', sender: 'bot', text: `안녕하세요! 회의 관련 도우미입니다. 회의 내용을 질문해보세요.`, time: new Date().toISOString(), sources: undefined
   }]);
+  const [showSourcesMap, setShowSourcesMap] = useState<Record<string, boolean>>({});
   const [input, setInput] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+  const getAuthToken = (): string | null => {
+    if (typeof window === 'undefined') return null;
+    return localStorage.getItem('access_token');
+  };
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   // Positioning for draggable/floating window (shared by full window and collapsed bubble)
@@ -114,12 +122,75 @@ export default function MeetingChat({ meeting, open, onOpen, onClose }: { meetin
     clickCandidateRef.current = true;
   };
 
-  const send = () => {
-    if (!input.trim()) return;
-    const user = { id: String(Date.now()), sender: 'user' as const, text: input, time: new Date().toISOString() };
+  const send = async () => {
+    const question = input.trim();
+    if (!question || !meeting) return;
+
+    const user = { id: String(Date.now()), sender: 'user' as const, text: question, time: new Date().toISOString() };
     setMessages(m => [...m, user]);
     setInput('');
-    setTimeout(() => setMessages(m => [...m, { id: String(Date.now()+1), sender: 'bot', text: `예시 응답: "${user.text}"`, time: new Date().toISOString() }]), 600);
+
+    setIsTyping(true);
+    try {
+      const token = getAuthToken();
+      // support different meeting id field names (meeting_id vs id)
+      const meetingId = (meeting as any)?.meeting_id || (meeting as any)?.id || null;
+      const res = await fetch(`${API_URL}/api/v1/chatbot/ask`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ meeting_id: meetingId, question, use_rag: true }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        // Normalize error message: if detail is an object, try to extract useful text or stringify
+        let detail = err && err.detail !== undefined ? err.detail : err;
+        let detailText = '';
+        if (typeof detail === 'string') {
+          detailText = detail;
+        } else if (detail && typeof detail === 'object') {
+          // Try common shapes: {detail: '...'} or {message: '...'} or pydantic style
+          detailText = detail.detail || detail.message || JSON.stringify(detail);
+        } else {
+          detailText = String(detail);
+        }
+
+        setMessages(m => [...m, { id: String(Date.now()+1), sender: 'bot', text: `오류: ${detailText}`, time: new Date().toISOString() }]);
+        setIsTyping(false);
+        return;
+      }
+
+      const data = await res.json();
+      // Normalize answer field (sometimes API may return object)
+      let botText = '';
+      if (!data) {
+        botText = '응답이 없습니다.';
+      } else if (typeof data.answer === 'string') {
+        botText = data.answer;
+      } else if (data.answer && typeof data.answer === 'object') {
+        // try common nested field
+        botText = data.answer.text || data.answer.content || JSON.stringify(data.answer);
+      } else if (data.answer == null && data.ANSWER) {
+        botText = String(data.ANSWER);
+      } else {
+        botText = String(data.answer || data);
+      }
+
+      // attach retrieved chunks (if present) to the bot message
+      const botMsgId = String(Date.now()+2);
+      const sources = Array.isArray(data.retrieved_chunks) ? data.retrieved_chunks.map((c: any) => ({ embedding_id: c.embedding_id, text: c.text || c, similarity: c.similarity })) : undefined;
+      setMessages(m => [...m, { id: botMsgId, sender: 'bot', text: botText, time: new Date().toISOString(), sources }]);
+      if (sources && sources.length > 0) {
+        setShowSourcesMap(prev => ({ ...prev, [botMsgId]: false }));
+      }
+    } catch (e: any) {
+      setMessages(m => [...m, { id: String(Date.now()+3), sender: 'bot', text: `요청 실패: ${e.message || e}`, time: new Date().toISOString() }]);
+    } finally {
+      setIsTyping(false);
+    }
   };
 
   if (!pos) return null; // wait until positioned
@@ -170,6 +241,26 @@ export default function MeetingChat({ meeting, open, onOpen, onClose }: { meetin
               <div key={m.id} className={m.sender === 'user' ? 'flex justify-end' : 'flex justify-start'}>
                 <div className={m.sender === 'user' ? 'bg-blue-500 text-white rounded-lg px-3 py-2 max-w-[80%]' : 'bg-gray-100 text-gray-900 rounded-lg px-3 py-2 max-w-[80%]'}>
                   <div className="text-sm">{m.text}</div>
+                  {m.sources && m.sources.length > 0 && (
+                    <div className="mt-2 text-xs text-gray-500">
+                      <button
+                        className="underline"
+                        onClick={() => setShowSourcesMap(prev => ({ ...prev, [m.id]: !prev[m.id] }))}
+                      >
+                        {showSourcesMap[m.id] ? '출처 숨기기' : `출처 보기 (${m.sources.length})`}
+                      </button>
+                      {showSourcesMap[m.id] && (
+                        <ul className="mt-2 space-y-2 text-[12px] text-gray-700">
+                          {m.sources.map((s, idx) => (
+                            <li key={idx} className="p-2 bg-white border rounded">
+                              <div className="text-[11px] text-gray-500">{s.embedding_id ? `source:${s.embedding_id}` : ''} {s.similarity ? `(sim: ${s.similarity.toFixed(3)})` : ''}</div>
+                              <div className="text-sm mt-1">{s.text}</div>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
                   <div className="text-[10px] text-gray-400 mt-1 text-right">{new Date(m.time).toLocaleTimeString()}</div>
                 </div>
               </div>

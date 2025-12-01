@@ -134,6 +134,7 @@ export const getFullReport = async (meetingId: string): Promise<FullReportRespon
  * @param meetingId - 회의 ID
  * @param template - 선택된 템플릿 (선택사항)
  */
+<<<<<<< HEAD
 export const regenerateSummary = async (
   meetingId: string, 
   template?: Template
@@ -145,6 +146,11 @@ export const regenerateSummary = async (
       method: 'POST',
       body: JSON.stringify(body)
     })
+=======
+export const regenerateSummary = async (meetingId: string): Promise<RegenerateResponse> => {
+  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/regenerate`, 
+    getFetchOptions({ method: 'POST' })
+>>>>>>> c313084eb18c5b12a6ea86f777531a1e6ff7e23d
   );
 
   await handleAuthResponse(response);

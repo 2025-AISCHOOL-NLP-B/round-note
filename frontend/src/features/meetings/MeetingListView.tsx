@@ -4,9 +4,8 @@ import { Button } from '@/shared/ui/button';
 import { Badge } from '@/shared/ui/badge';
 import { Input } from '@/shared/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
-import { Calendar, CheckCircle2, Circle, Eye, Search, Filter, Trash2, MessageSquare } from 'lucide-react';
+import { Calendar, CheckCircle2, Circle, Eye, Search, Filter, Trash2 } from 'lucide-react';
 import { MeetingDetail } from '@/features/meetings/MeetingDetail';
-import MeetingChat from './MeetingChat';
 import { ScrollToTop } from '@/features/utils/ScrollToTop';
 import type { Meeting } from '@/features/dashboard/Dashboard';
 
@@ -19,7 +18,7 @@ interface MeetingListViewProps {
 
 export function MeetingListView({ meetings, onUpdateMeeting, onDeleteMeeting }: MeetingListViewProps) {
   const [selectedMeeting, setSelectedMeeting] = useState<Meeting | null>(null);
-  const [chatVisible, setChatVisible] = useState(true);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'completed' | 'pending'>('all');
   const [sortBy, setSortBy] = useState<'date' | 'title' | 'progress'>('date');
@@ -30,7 +29,7 @@ export function MeetingListView({ meetings, onUpdateMeeting, onDeleteMeeting }: 
     // Search filter
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(meeting => 
+      filtered = filtered.filter(meeting =>
         meeting.title.toLowerCase().includes(query) ||
         meeting.content.toLowerCase().includes(query) ||
         meeting.summary.toLowerCase().includes(query)
@@ -53,9 +52,9 @@ export function MeetingListView({ meetings, onUpdateMeeting, onDeleteMeeting }: 
       } else if (sortBy === 'title') {
         return a.title.localeCompare(b.title);
       } else {
-        const progressA = a.actionItems.length === 0 ? 100 : 
+        const progressA = a.actionItems.length === 0 ? 100 :
           (a.actionItems.filter(i => i.completed).length / a.actionItems.length) * 100;
-        const progressB = b.actionItems.length === 0 ? 100 : 
+        const progressB = b.actionItems.length === 0 ? 100 :
           (b.actionItems.filter(i => i.completed).length / b.actionItems.length) * 100;
         return progressB - progressA;
       }
@@ -70,7 +69,7 @@ export function MeetingListView({ meetings, onUpdateMeeting, onDeleteMeeting }: 
     return Math.round((completed / meeting.actionItems.length) * 100);
   };
 
-  
+
 
   // If a meeting is selected, show detail view
   if (selectedMeeting) {
@@ -95,45 +94,45 @@ export function MeetingListView({ meetings, onUpdateMeeting, onDeleteMeeting }: 
         <Card className="bg-primary/5 border-primary/20">
           <CardContent className="pt-6">
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 items-center">
-            <div className="md:col-span-1">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <Input
-                  placeholder="회의록 검색..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10 bg-white"
-                />
+              <div className="md:col-span-1">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <Input
+                    placeholder="회의록 검색..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-10 bg-white"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Filter className="w-4 h-4 text-gray-500" />
+                <Select value={filterStatus} onValueChange={(value: any) => setFilterStatus(value)}>
+                  <SelectTrigger className="bg-white">
+                    <SelectValue placeholder="상태 필터" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">전체</SelectItem>
+                    <SelectItem value="pending">진행 중</SelectItem>
+                    <SelectItem value="completed">완료</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <Select value={sortBy} onValueChange={(value: any) => setSortBy(value)}>
+                  <SelectTrigger className="bg-white">
+                    <SelectValue placeholder="정렬" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="date">날짜순</SelectItem>
+                    <SelectItem value="title">제목순</SelectItem>
+                    <SelectItem value="progress">진행률순</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
-
-            <div className="flex items-center gap-2">
-              <Filter className="w-4 h-4 text-gray-500" />
-              <Select value={filterStatus} onValueChange={(value: any) => setFilterStatus(value)}>
-                <SelectTrigger className="bg-white">
-                  <SelectValue placeholder="상태 필터" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">전체</SelectItem>
-                  <SelectItem value="pending">진행 중</SelectItem>
-                  <SelectItem value="completed">완료</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <Select value={sortBy} onValueChange={(value: any) => setSortBy(value)}>
-                <SelectTrigger className="bg-white">
-                  <SelectValue placeholder="정렬" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="date">날짜순</SelectItem>
-                  <SelectItem value="title">제목순</SelectItem>
-                  <SelectItem value="progress">진행률순</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
 
             {searchQuery && (
               <div className="mt-4 text-sm text-gray-600">
@@ -205,14 +204,14 @@ export function MeetingListView({ meetings, onUpdateMeeting, onDeleteMeeting }: 
                           액션: {completedCount}/{meeting.actionItems.length}
                         </span>
                       </div>
-                      <Badge 
-                        variant="secondary" 
+                      <Badge
+                        variant="secondary"
                         className={
-                          progress === 100 
-                            ? 'bg-green-100 text-green-700' 
-                            : progress > 50 
-                            ? 'bg-blue-100 text-blue-700' 
-                            : 'bg-orange-100 text-orange-700'
+                          progress === 100
+                            ? 'bg-green-100 text-green-700'
+                            : progress > 50
+                              ? 'bg-blue-100 text-blue-700'
+                              : 'bg-orange-100 text-orange-700'
                         }
                       >
                         {progress}%
@@ -228,9 +227,9 @@ export function MeetingListView({ meetings, onUpdateMeeting, onDeleteMeeting }: 
                     </div>
 
                     {/* View Button */}
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
+                    <Button
+                      variant="outline"
+                      size="sm"
                       className="w-full gap-2"
                       onClick={() => setSelectedMeeting(meeting)}
                     >
@@ -245,14 +244,6 @@ export function MeetingListView({ meetings, onUpdateMeeting, onDeleteMeeting }: 
         </div>
       )}
       <ScrollToTop />
-
-      {/* Fixed right-side chat: always mounted so the collapsed bubble can be moved. */}
-      <MeetingChat
-        meeting={filteredAndSortedMeetings[0]}
-        open={chatVisible}
-        onOpen={() => setChatVisible(true)}
-        onClose={() => setChatVisible(false)}
-      />
     </div>
   );
 }

@@ -62,7 +62,10 @@ import {
 import { toast } from 'sonner';
 import { createMeeting, endMeeting } from '@/features/meetings/meetingsService';
 import { regenerateSummary } from '@/features/meetings/reportsService';
+<<<<<<< HEAD
 import { getActiveTemplate } from '@/features/settings/templateUtils';
+=======
+>>>>>>> c313084eb18c5b12a6ea86f777531a1e6ff7e23d
 import { fetchWithAuth } from '@/utils/auth';
 import type { Meeting } from "@/features/dashboard/Dashboard";
 
@@ -75,7 +78,11 @@ interface MeetingContentInputProps {
     purpose?: string;
     participants?: string
   };
+<<<<<<< HEAD
   onComplete: (content: string, aiAnalysis?: any) => void;
+=======
+  onComplete: (content: string, aiAnalysis?: any, meetingId?: string | null) => void;
+>>>>>>> c313084eb18c5b12a6ea86f777531a1e6ff7e23d
   onBack: () => void;
   meetings: Meeting[];
 }
@@ -116,7 +123,10 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
   const [activeTab, setActiveTab] = useState<'transcribe' | 'summary'>('transcribe');
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const [realtimeSummary, setRealtimeSummary] = useState<string>('');
+<<<<<<< HEAD
   const [localParticipants, setLocalParticipants] = useState(meetingInfo.participants || '');
+=======
+>>>>>>> c313084eb18c5b12a6ea86f777531a1e6ff7e23d
   const contentEndRef = useRef<HTMLDivElement>(null);
   const summaryEndRef = useRef<HTMLDivElement>(null);
   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -339,18 +349,29 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
     } else {
       try {
         // 1) 회의 미리 생성 (is_realtime 플래그)
+<<<<<<< HEAD
         let createdMeetingId: string | undefined;
         try {
           const created = await createMeeting({ title: editableTitle || generateDefaultTitle(meetings), purpose: meetingInfo.purpose, is_realtime: true });
           createdMeetingId = created.meeting_id;
+=======
+        let created;
+        try {
+          created = await createMeeting({ title: editableTitle || generateDefaultTitle(meetings), purpose: meetingInfo.purpose, is_realtime: true });
+>>>>>>> c313084eb18c5b12a6ea86f777531a1e6ff7e23d
           setCurrentMeetingId(created.meeting_id);
         } catch (e) {
           console.error('Failed to create meeting before recording:', e);
           toast.error('회의 생성에 실패했습니다. 네트워크 상태를 확인해주세요.');
           return;
         }
+<<<<<<< HEAD
         // 2) 녹음 시작 (meetingId + 참여자 이름을 키워드 부스팅에 전달)
         await startRecording(createdMeetingId, localParticipants);
+=======
+        // 2) 녹음 시작 (생성된 회의 ID 전달)
+        await startRecording(created.meeting_id);
+>>>>>>> c313084eb18c5b12a6ea86f777531a1e6ff7e23d
         startAudioRecording();
         setRecordingTime(0);
         toast.success('녹음이 시작되었습니다.');
@@ -477,6 +498,7 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
       } else {
         // 1) 회의 종료/내용 저장
         await endMeeting(currentMeetingId, { status: 'COMPLETED', ended_at: new Date().toISOString(), content });
+<<<<<<< HEAD
         
         // 2) 현재 선택된 템플릿 가져오기
         const activeTemplate = getActiveTemplate();
@@ -493,6 +515,10 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
         
         // 3) 요약 재생성 (템플릿 적용)
         const regen = await regenerateSummary(currentMeetingId, templateData);
+=======
+        // 2) 요약 재생성
+        const regen = await regenerateSummary(currentMeetingId);
+>>>>>>> c313084eb18c5b12a6ea86f777531a1e6ff7e23d
         // 3) UI 반영
         setAiAnalysis({ summary: regen.summary, actionItems: regen.action_items_count });
         toast.success('회의록이 저장되고 AI 요약이 생성되었습니다.');
@@ -504,7 +530,7 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
 
     // 최종 UI 정리
     setTimeout(() => {
-      onComplete(content, analysisWithAudio);
+      onComplete(content, analysisWithAudio, currentMeetingId);
       setContent('');
       // Reset audio chunks for next recording
       audioChunksRef.current = [];

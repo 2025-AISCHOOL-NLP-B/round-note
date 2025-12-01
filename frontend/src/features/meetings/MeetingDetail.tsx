@@ -130,21 +130,56 @@ export function MeetingDetail({
 
   // Set audio src with token on mount and when audioUrl changes
   useEffect(() => {
-    if (meeting.audioUrl && meeting.audioUrl.trim() !== '') {
-      const token = localStorage.getItem('access_token');
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      const fullAudioUrl = `${apiUrl}/api/v1/meetings/${meeting.id}/audio?token=${token}`;
-      console.log('[MeetingDetail] Setting audio URL:', fullAudioUrl);
-      setAudioSrc(fullAudioUrl);
-      
-      // 오디오 엘리먼트가 있으면 강제로 로드
-      if (audioPlayerRef.current) {
-        audioPlayerRef.current.load();
+    let objectUrl: string | null = null;
+    
+    async function loadAudio() {
+      if (meeting.audioUrl && meeting.audioUrl.trim() !== '') {
+        try {
+          const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+          const audioApiUrl = `${apiUrl}/api/v1/meetings/${meeting.id}/audio`;
+          
+          console.log('[MeetingDetail] Fetching audio from:', audioApiUrl);
+          
+          // httpOnly Cookie를 포함하여 오디오 파일 가져오기
+          const response = await fetch(audioApiUrl, {
+            credentials: 'include', // httpOnly Cookie 전송
+          });
+          
+          if (!response.ok) {
+            console.error('[MeetingDetail] Audio fetch failed:', response.status, response.statusText);
+            setAudioSrc('');
+            return;
+          }
+          
+          // Blob으로 변환하고 Object URL 생성
+          const blob = await response.blob();
+          objectUrl = URL.createObjectURL(blob);
+          
+          console.log('[MeetingDetail] Audio loaded successfully, Blob URL:', objectUrl);
+          setAudioSrc(objectUrl);
+          
+          // 오디오 엘리먼트가 있으면 강제로 로드
+          if (audioPlayerRef.current) {
+            audioPlayerRef.current.load();
+          }
+        } catch (error) {
+          console.error('[MeetingDetail] Audio load error:', error);
+          setAudioSrc('');
+        }
+      } else {
+        console.log('[MeetingDetail] No audio URL available:', meeting.audioUrl);
+        setAudioSrc('');
       }
-    } else {
-      console.log('[MeetingDetail] No audio URL available:', meeting.audioUrl);
-      setAudioSrc('');
     }
+    
+    loadAudio();
+    
+    // Cleanup: Object URL 해제
+    return () => {
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
   }, [meeting.id, meeting.audioUrl]);
 
   // 페이지 로드 시 마지막 선택 언어로 자동 번역
@@ -196,16 +231,13 @@ export function MeetingDetail({
 
     // 백엔드 동기화
     try {
-      const token = localStorage.getItem('access_token');
-      if (!token) return;
-
       const newStatus = newCompleted ? 'DONE' : 'TODO';
       await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/reports/${meeting.id}/action-items/${actionItemId}`, {
         method: 'PATCH',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({ status: newStatus }),
       });
     } catch (error) {
@@ -229,9 +261,6 @@ export function MeetingDetail({
 
     // 백엔드 동기화
     try {
-      const token = localStorage.getItem('access_token');
-      if (!token) return;
-
       const updates: any = {};
       
       if (field === 'assignee') {
@@ -245,9 +274,9 @@ export function MeetingDetail({
       await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/reports/${meeting.id}/action-items/${actionItemId}`, {
         method: 'PATCH',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify(updates),
       });
     } catch (error) {
@@ -272,17 +301,9 @@ export function MeetingDetail({
   const handleDelete = async () => {
     if (confirm('정말로 이 회의록을 삭제하시겠습니까?')) {
       try {
-        const token = localStorage.getItem('access_token');
-        if (!token) {
-          alert('로그인이 필요합니다.');
-          return;
-        }
-
         const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/meetings/${meeting.id}`, {
           method: 'DELETE',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
+          credentials: 'include', // httpOnly Cookie 전송
         });
 
         if (response.ok) {
@@ -329,8 +350,8 @@ export function MeetingDetail({
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
           },
+          credentials: 'include', // httpOnly Cookie 전송
         }
       );
       
@@ -545,7 +566,7 @@ export function MeetingDetail({
           </TabsTrigger>
           <TabsTrigger value="analysis" className="gap-1 md:gap-2 text-sm md:text-base">
             <Brain className="w-4 h-4" />
-            <span className="hidden sm:inline">심층 분석</span>
+            <span className="hidden sm:inline">액션 및 분석</span>
             <span className="sm:hidden">분석</span>
           </TabsTrigger>
         </TabsList>
@@ -664,7 +685,7 @@ export function MeetingDetail({
                         className="gap-2"
                       >
                         <Settings className="w-4 h-4" />
-                        <span className="hidden sm:inline">설정</span>
+                        <span className="hidden sm:inline">수정</span>
                       </Button>
                       <CollapsibleTrigger asChild>
                         <Button variant="ghost" size="sm">

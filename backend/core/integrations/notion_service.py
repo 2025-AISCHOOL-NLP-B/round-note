@@ -71,10 +71,18 @@ class Attachment:
 class NotionService:
     """Notion 연동 서비스"""
     
-    def __init__(self):
-        self.api_token = os.getenv("NOTION_API_TOKEN")
-        self.parent_page = os.getenv("NOTION_PARENT_PAGE_ID")
-        self.database_id = os.getenv("NOTION_DATABASE_ID")
+    def __init__(self, api_token: str, parent_page_id: Optional[str] = None, database_id: Optional[str] = None):
+        """
+        Notion API 클라이언트 초기화
+        
+        Args:
+            api_token: Notion Integration Token
+            parent_page_id: 회의록이 생성될 상위 페이지 ID (선택)
+            database_id: 액션 아이템용 Tasks 데이터베이스 ID (선택)
+        """
+        self.api_token = api_token
+        self.parent_page = parent_page_id
+        self.database_id = database_id
         self.base_url = "https://api.notion.com/v1"
         self.headers = {
             "Authorization": f"Bearer {self.api_token}",
@@ -126,9 +134,20 @@ class NotionService:
     
     def create_page(self, title: str, content_blocks: list) -> dict:
         """Create a Notion page under configured parent page."""
+        # parent_page가 "workspace"이면 자동으로 첫 번째 페이지 찾기
+        parent_id = self.parent_page
+        
+        if not parent_id or parent_id == "workspace":
+            # 자동으로 workspace의 페이지 찾기
+            pages = self.search_pages(include_workspace=False)
+            if not pages:
+                raise ValueError("접근 가능한 Notion 페이지가 없습니다. Integration에 페이지 권한을 부여해주세요.")
+            parent_id = pages[0]["id"]
+            print(f"[INFO] 자동으로 선택된 Parent Page: {pages[0]['title']} ({parent_id})")
+        
         url = f"{self.base_url}/pages"
         payload = {
-            "parent": {"page_id": self.parent_page},
+            "parent": {"page_id": parent_id},
             "properties": {
                 "title": {
                     "title": [{"text": {"content": title}}]
@@ -146,6 +165,113 @@ class NotionService:
         resp = requests.patch(url, json={"children": blocks}, headers=self.headers)
         resp.raise_for_status()
         return resp.json()
+    
+    def search_pages(self, query: str = "", include_workspace: bool = True) -> List[Dict]:
+        """
+        Notion에서 페이지 검색 (사용자가 접근 가능한 페이지 목록)
+        
+        Args:
+            query: 검색어 (비어있으면 모든 페이지)
+            include_workspace: workspace 루트 옵션 포함 여부
+        
+        Returns:
+            페이지 목록 [{"id": "...", "title": "...", "url": "..."}]
+        """
+        url = f"{self.base_url}/search"
+        payload = {
+            "filter": {"property": "object", "value": "page"},
+            "sort": {"direction": "descending", "timestamp": "last_edited_time"}
+        }
+        
+        if query:
+            payload["query"] = query
+        
+        try:
+            resp = requests.post(url, json=payload, headers=self.headers)
+            resp.raise_for_status()
+            result = resp.json()
+        except requests.exceptions.RequestException as e:
+            print(f"[ERROR] Notion API request failed: {str(e)}")
+            if hasattr(e, 'response') and e.response is not None:
+                print(f"[ERROR] Response status: {e.response.status_code}")
+                print(f"[ERROR] Response body: {e.response.text[:500]}")
+            raise
+        
+        pages = []
+        for item in result.get("results", []):
+            try:
+                # 페이지 제목 추출
+                title = "Untitled"
+                
+                # Notion 페이지는 properties가 아니라 최상위에 title이 있을 수 있음
+                if "title" in item and isinstance(item["title"], list) and len(item["title"]) > 0:
+                    # 페이지의 title 속성 (일반적인 경우)
+                    if "plain_text" in item["title"][0]:
+                        title = item["title"][0]["plain_text"]
+                elif "properties" in item:
+                    # 데이터베이스 아이템인 경우
+                    props = item["properties"]
+                    # title 타입의 속성 찾기
+                    for prop_name, prop_value in props.items():
+                        if prop_value.get("type") == "title" and prop_value.get("title"):
+                            if len(prop_value["title"]) > 0 and "plain_text" in prop_value["title"][0]:
+                                title = prop_value["title"][0]["plain_text"]
+                                break
+                
+                pages.append({
+                    "id": item["id"],
+                    "title": title,
+                    "url": item.get("url", "")
+                })
+            except Exception as e:
+                print(f"[ERROR] Failed to parse page item: {str(e)}")
+                print(f"[ERROR] Item: {item}")
+                # Skip this item and continue with others
+                continue
+        
+        # workspace 루트 옵션 추가 (parent 없이 생성하려면 최상위 페이지 중 하나를 찾아야 함)
+        if include_workspace and pages:
+            # 첫 번째 페이지를 기본값으로 추천
+            pages.insert(0, {
+                "id": "workspace",
+                "title": "📁 Workspace (최상위 페이지에 생성)",
+                "url": ""
+            })
+        
+        return pages
+    
+    def get_databases(self) -> List[Dict]:
+        """
+        사용자가 접근 가능한 데이터베이스 목록 조회
+        
+        Returns:
+            데이터베이스 목록 [{"id": "...", "title": "...", "url": "..."}]
+        """
+        url = f"{self.base_url}/search"
+        payload = {
+            "filter": {"property": "object", "value": "database"},
+            "sort": {"direction": "descending", "timestamp": "last_edited_time"}
+        }
+        
+        resp = requests.post(url, json=payload, headers=self.headers)
+        resp.raise_for_status()
+        result = resp.json()
+        
+        databases = []
+        for item in result.get("results", []):
+            # 데이터베이스 제목 추출
+            title = "Untitled"
+            if "title" in item and isinstance(item["title"], list) and len(item["title"]) > 0:
+                if "plain_text" in item["title"][0]:
+                    title = item["title"][0]["plain_text"]
+            
+            databases.append({
+                "id": item["id"],
+                "title": title,
+                "url": item.get("url", "")
+            })
+        
+        return databases
     
     # --------------------------------------------------------
     # 포괄적 회의록 
@@ -352,9 +478,20 @@ class NotionService:
                 children.append(self._bullet_with_link("📄 ", "전체 전사 텍스트 보기", transcript_url))
         
         # 페이지 생성
+        # parent_page가 "workspace"이면 자동으로 첫 번째 페이지 찾기
+        parent_id = self.parent_page
+        
+        if not parent_id or parent_id == "workspace":
+            # 자동으로 workspace의 페이지 찾기
+            pages = self.search_pages(include_workspace=False)
+            if not pages:
+                raise ValueError("접근 가능한 Notion 페이지가 없습니다. Integration에 페이지 권한을 부여해주세요.")
+            parent_id = pages[0]["id"]
+            print(f"[INFO] 자동으로 선택된 Parent Page: {pages[0]['title']} ({parent_id})")
+        
         url = f"{self.base_url}/pages"
         payload = {
-            "parent": {"page_id": self.parent_page},
+            "parent": {"page_id": parent_id},
             "icon": {"emoji": "📝"},
             "properties": {
                 "title": {

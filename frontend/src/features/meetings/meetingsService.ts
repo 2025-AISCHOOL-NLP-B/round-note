@@ -1,30 +1,23 @@
 /**
  * 회의(Meeting) API 서비스
  * 백엔드 /api/v1/meetings 엔드포인트와 통신
+ * httpOnly Cookie 기반 인증 사용
  */
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-// 토큰을 로컬스토리지에서 가져오는 헬퍼 함수
-const getAuthToken = (): string | null => {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('access_token');
-};
-
-const clearAuth = () => {
-  if (typeof window !== 'undefined') {
-    localStorage.removeItem('access_token');
-    // keep refresh_token handling for future implementation
-    // localStorage.removeItem('refresh_token');
-  }
-};
-
-// 공통 헤더 생성
+// 공통 헤더 생성 (Cookie는 브라우저가 자동으로 전송)
 const getHeaders = (): HeadersInit => {
-  const token = getAuthToken();
   return {
     'Content-Type': 'application/json',
-    ...(token && { 'Authorization': `Bearer ${token}` })
+  };
+};
+
+// 공통 fetch 옵션 (credentials 포함)
+const getFetchOptions = (options: RequestInit = {}): RequestInit => {
+  return {
+    ...options,
+    credentials: 'include', // httpOnly Cookie 자동 전송
   };
 };
 
@@ -44,9 +37,12 @@ const handleResponse = async (response: Response) => {
   const body = await response.json().catch(() => ({ detail: response.statusText || 'Request failed' }));
 
   if (response.status === 401) {
-    // clear local tokens and throw marker AuthError
-    clearAuth();
-    throw new AuthError(body.detail || '유효하지 않은 인증 토큰입니다.');
+    // httpOnly Cookie가 만료되었거나 없는 경우
+    // 로그인 페이지로 리다이렉트
+    if (typeof window !== 'undefined') {
+      window.location.href = '/login';
+    }
+    throw new AuthError(body.detail || '인증이 필요합니다. 다시 로그인해주세요.');
   }
 
   throw new Error(body.detail || `Request failed with status ${response.status}`);
@@ -87,11 +83,11 @@ export interface EndMeetingRequest {
  * 회의 생성
  */
 export const createMeeting = async (data: CreateMeetingRequest): Promise<MeetingResponse> => {
-  const response = await fetch(`${API_URL}/api/v1/meetings/`, {
+  const response = await fetch(`${API_URL}/api/v1/meetings/`, getFetchOptions({
     method: 'POST',
     headers: getHeaders(),
     body: JSON.stringify(data),
-  });
+  }));
 
   await handleResponse(response);
   return response.json();
@@ -101,10 +97,10 @@ export const createMeeting = async (data: CreateMeetingRequest): Promise<Meeting
  * 회의 목록 조회
  */
 export const listMeetings = async (skip: number = 0, limit: number = 100): Promise<MeetingResponse[]> => {
-  const response = await fetch(`${API_URL}/api/v1/meetings/?skip=${skip}&limit=${limit}`, {
+  const response = await fetch(`${API_URL}/api/v1/meetings/?skip=${skip}&limit=${limit}`, getFetchOptions({
     method: 'GET',
     headers: getHeaders(),
-  });
+  }));
 
   await handleResponse(response);
   return response.json();
@@ -114,10 +110,10 @@ export const listMeetings = async (skip: number = 0, limit: number = 100): Promi
  * 회의 상세 조회
  */
 export const getMeeting = async (meetingId: string): Promise<MeetingResponse> => {
-  const response = await fetch(`${API_URL}/api/v1/meetings/${meetingId}`, {
+  const response = await fetch(`${API_URL}/api/v1/meetings/${meetingId}`, getFetchOptions({
     method: 'GET',
     headers: getHeaders(),
-  });
+  }));
 
   await handleResponse(response);
   return response.json();
@@ -127,11 +123,11 @@ export const getMeeting = async (meetingId: string): Promise<MeetingResponse> =>
  * 회의 수정
  */
 export const updateMeeting = async (meetingId: string, data: UpdateMeetingRequest): Promise<MeetingResponse> => {
-  const response = await fetch(`${API_URL}/api/v1/meetings/${meetingId}`, {
+  const response = await fetch(`${API_URL}/api/v1/meetings/${meetingId}`, getFetchOptions({
     method: 'PUT',
     headers: getHeaders(),
     body: JSON.stringify(data),
-  });
+  }));
 
   await handleResponse(response);
   return response.json();
@@ -141,10 +137,10 @@ export const updateMeeting = async (meetingId: string, data: UpdateMeetingReques
  * 회의 삭제
  */
 export const deleteMeeting = async (meetingId: string): Promise<void> => {
-  const response = await fetch(`${API_URL}/api/v1/meetings/${meetingId}`, {
+  const response = await fetch(`${API_URL}/api/v1/meetings/${meetingId}`, getFetchOptions({
     method: 'DELETE',
     headers: getHeaders(),
-  });
+  }));
 
   await handleResponse(response);
   return;
@@ -163,11 +159,11 @@ export const endMeeting = async (meetingId: string, data?: EndMeetingRequest): P
   summary?: string;
   action_items?: Array<{task: string; assignee: string; deadline: string}>;
 }> => {
-  const response = await fetch(`${API_URL}/api/v1/meetings/${meetingId}/end`, {
+  const response = await fetch(`${API_URL}/api/v1/meetings/${meetingId}/end`, getFetchOptions({
     method: 'POST',
     headers: getHeaders(),
     body: JSON.stringify(data || { status: 'COMPLETED', ended_at: new Date().toISOString() }),
-  });
+  }));
 
   await handleResponse(response);
   return response.json();
@@ -184,10 +180,10 @@ export const getMeetingSummary = async (meetingId: string): Promise<{
   translated_content?: string;
   created_dt: string;
 }> => {
-  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/summary`, {
+  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/summary`, getFetchOptions({
     method: 'GET',
     headers: getHeaders(),
-  });
+  }));
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Failed to fetch summary' }));
@@ -213,10 +209,10 @@ export const getMeetingActionItems = async (meetingId: string): Promise<Array<{
   created_dt: string;
   updated_dt?: string;
 }>> => {
-  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/action-items`, {
+  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/action-items`, getFetchOptions({
     method: 'GET',
     headers: getHeaders(),
-  });
+  }));
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Failed to fetch action items' }));
@@ -241,10 +237,10 @@ export const translateMeetingContent = async (
 }> => {
   const response = await fetch(
     `${API_URL}/api/v1/reports/${meetingId}/translate?content_type=${contentType}&target_lang=${targetLang}`, 
-    {
+    getFetchOptions({
       method: 'POST',
       headers: getHeaders(),
-    }
+    })
   );
 
   if (!response.ok) {

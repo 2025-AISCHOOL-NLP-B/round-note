@@ -1,14 +1,18 @@
-from fastapi import APIRouter, Depends, status, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, status, HTTPException, UploadFile, File, BackgroundTasks, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List
 import os
+from datetime import datetime
 from backend.database import get_db
 from backend.schemas import meeting as meeting_schema
 from backend.crud import meeting as meeting_crud
 from backend.dependencies import get_current_user
 from backend import models
 # TODO: Redis/RQ 클라이언트 (get_redis_conn) 임포트 및 backend.worker.process_meeting_job 임포트
+# [추가]
+from backend.core.llm.rag.indexer import index_meeting_transcript, index_meeting_transcript_background
+from pydantic import BaseModel
 
 router = APIRouter(tags=["Meetings"])
 
@@ -344,6 +348,17 @@ async def end_meeting_and_process(
             # 액션 아이템 저장
             for item_data in result.get("action_items", []):
                 item_id = str(ulid.new())
+                
+                # 마감일 파싱
+                deadline_str = item_data.get("deadline")
+                due_dt = None
+                if deadline_str and deadline_str != "미정":
+                    try:
+                        # YYYY-MM-DD 형식 파싱
+                        due_dt = datetime.strptime(deadline_str, "%Y-%m-%d")
+                    except ValueError:
+                        pass
+
                 action_item = models.ActionItem(
                     ITEM_ID=item_id,
                     MEETING_ID=meeting_id,
@@ -351,7 +366,9 @@ async def end_meeting_and_process(
                     DESCRIPTION=item_data.get("task", ""),
                     STATUS="PENDING",
                     PRIORITY="MEDIUM",
-                    ASSIGNEE_ID=None
+                    ASSIGNEE_ID=None,
+                    ASSIGNEE_NAME=item_data.get("assignee"),
+                    DUE_DT=due_dt
                 )
                 db.add(action_item)
                 action_items.append({
@@ -381,49 +398,26 @@ async def end_meeting_and_process(
         "action_items": action_items
     }
 
+from pathlib import Path
+
+# ... existing code ...
+
 # ==================== 7. 회의 오디오 파일 다운로드 ====================
 @router.get("/{meeting_id}/audio")
 async def get_meeting_audio(
     meeting_id: str,
-    token: str = None,  # 쿼리 파라미터로 토큰 전달 가능
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)  # httpOnly Cookie 인증
 ):
     """
     회의의 오디오 파일을 다운로드합니다.
     
     - **meeting_id**: 회의 ID (ULID)
-    - **token**: JWT 토큰 (쿼리 파라미터로 전달)
     
     본인이 생성한 회의의 오디오 파일만 다운로드할 수 있습니다.
+    httpOnly Cookie를 통한 인증이 필요합니다.
     """
-    # 쿼리 파라미터로 전달된 토큰으로 사용자 인증
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="인증 토큰이 필요합니다."
-        )
-    
-    try:
-        from backend.core.auth.security import verify_token
-        payload = verify_token(token)
-        if not payload:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="유효하지 않은 토큰입니다."
-            )
-        user_id = payload.get("sub")
-        if not user_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="토큰에서 사용자 ID를 찾을 수 없습니다."
-            )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"토큰 검증 오류: {str(e)}"
-        )
+    user_id = current_user.USER_ID
     
     # 회의 조회
     db_meeting = meeting_crud.get_meeting(db=db, meeting_id=meeting_id)
@@ -442,35 +436,58 @@ async def get_meeting_audio(
             detail="본인이 생성한 회의의 오디오만 다운로드할 수 있습니다."
         )
     
-    # LOCATION 또는 AUDIO_URL에서 파일 경로 확인
-    audio_path = db_meeting.LOCATION or db_meeting.AUDIO_URL
-    
-    if not audio_path:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="오디오 파일이 존재하지 않습니다."
-        )
-    
     # 로컬 파일 경로 확인 (audio_storage 폴더)
     # Docker 환경에서는 /app/audio_storage, 로컬에서는 ./audio_storage 사용
-    base_audio_dir = '/app/audio_storage' if os.path.exists('/app/audio_storage') else './audio_storage'
+    # 여러 경로를 확인하여 파일 찾기
+    possible_dirs = []
+    if os.path.exists('/app/audio_storage'):
+        possible_dirs.append('/app/audio_storage')
     
-    if audio_path.startswith('./audio_storage/'):
-        # 상대 경로를 절대 경로로 변환
-        filename = audio_path.replace('./audio_storage/', '')
-        file_path = os.path.join(base_audio_dir, filename)
-    elif audio_path.startswith('audio_storage/'):
-        filename = audio_path.replace('audio_storage/', '')
-        file_path = os.path.join(base_audio_dir, filename)
-    else:
-        # MEETING_ID.wav 형식으로 시도
-        file_path = os.path.join(base_audio_dir, f'{meeting_id}.wav')
+    # 프로젝트 루트 경로 계산 (backend/api/v1/meetings/endpoints.py -> root)
+    try:
+        root_dir = Path(__file__).resolve().parents[4]
+        root_audio_dir = root_dir / "audio_storage"
+        possible_dirs.append(str(root_audio_dir))
+    except:
+        pass
+
+    possible_dirs.append(os.path.abspath('./audio_storage'))
+    possible_dirs.append(os.path.abspath('../audio_storage'))
+    possible_dirs.append(os.path.abspath('./backend/audio_storage'))
+
+    file_path = None
+    found = False
+    
+    # 1. DB에 저장된 경로로 확인
+    audio_path = db_meeting.LOCATION or db_meeting.AUDIO_URL
+    if audio_path:
+        # 경로에서 파일명만 추출
+        filename = os.path.basename(audio_path)
+        
+        for base_dir in possible_dirs:
+            candidate = os.path.join(base_dir, filename)
+            if os.path.exists(candidate):
+                file_path = candidate
+                found = True
+                break
+    
+    # 2. DB 경로로 못 찾은 경우, meeting_id.wav로 확인
+    if not found:
+        filename = f'{meeting_id}.wav'
+        for base_dir in possible_dirs:
+            candidate = os.path.join(base_dir, filename)
+            if os.path.exists(candidate):
+                file_path = candidate
+                found = True
+                break
     
     # 파일 존재 확인
-    if not os.path.exists(file_path):
+    if not found or not file_path:
+        # 디버깅을 위해 검색한 경로들을 로그로 남기거나 에러 메시지에 포함
+        searched_paths = [os.path.join(d, f'{meeting_id}.wav') for d in possible_dirs]
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"오디오 파일을 찾을 수 없습니다: {file_path}"
+            detail=f"오디오 파일을 찾을 수 없습니다. 검색 경로: {searched_paths}"
         )
     
     # 파일 반환
@@ -513,22 +530,39 @@ async def upload_meeting_audio(
         )
     
     # 3. 파일 저장
-    base_audio_dir = '/app/audio_storage' if os.path.exists('/app/audio_storage') else './audio_storage'
+    base_audio_dir = None
+    if os.path.exists('/app/audio_storage'):
+        base_audio_dir = '/app/audio_storage'
+    else:
+        # 프로젝트 루트 경로 계산 (backend/api/v1/meetings/endpoints.py -> root)
+        try:
+            root_dir = Path(__file__).resolve().parents[4]
+            base_audio_dir = str(root_dir / "audio_storage")
+        except:
+            base_audio_dir = './audio_storage'
+
     os.makedirs(base_audio_dir, exist_ok=True)
     
     file_path = os.path.join(base_audio_dir, f'{meeting_id}.wav')
+    print(f"Saving audio to: {file_path}")  # Debug log
     
     try:
         with open(file_path, 'wb') as buffer:
             content = await file.read()
             buffer.write(content)
     except Exception as e:
+        print(f"Failed to save audio file: {e}") # Debug log
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"파일 저장 실패: {str(e)}"
         )
     
     # 4. DB 업데이트
+    # 저장된 위치를 기준으로 상대 경로 저장 (또는 절대 경로)
+    # 여기서는 일관성을 위해 ./audio_storage/... 형식으로 저장하거나
+    # 실제 저장된 위치를 반영하는 것이 좋음.
+    # 하지만 기존 로직 유지를 위해 ./audio_storage/로 저장하되,
+    # get_meeting_audio에서 잘 찾도록 함.
     audio_url = f'./audio_storage/{meeting_id}.wav'
     db_meeting.AUDIO_URL = audio_url
     db_meeting.LOCATION = audio_url
@@ -539,3 +573,94 @@ async def upload_meeting_audio(
         "audio_url": audio_url,
         "file_size": len(content)
     }
+
+# [추가(테스트용)]
+class DummyContentRequest(BaseModel):
+    content: str
+
+@router.post("/{meeting_id}/dummy-content")
+def set_dummy_content(
+    meeting_id: str,
+    body: DummyContentRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+    background_tasks: BackgroundTasks = None,
+):
+    meeting = (
+        db.query(models.Meeting)
+        .filter(models.Meeting.MEETING_ID == meeting_id)
+        .first()
+    )
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+
+    meeting.CONTENT = body.content
+    db.commit()
+    # Schedule indexing as a background task so the request isn't blocked
+    if background_tasks is not None:
+        background_tasks.add_task(index_meeting_transcript_background, meeting_id)
+    else:
+        # fallback: run synchronously if BackgroundTasks not provided
+        index_meeting_transcript(db, meeting_id)
+
+    return {"status": "ok"}
+
+@router.post("/{meeting_id}/index")
+def index_meeting(
+    meeting_id: str,
+    token: str = None,
+    request: Request = None,
+    db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks = None,
+):
+    """
+    Trigger indexing for a specific meeting. This schedules a background
+    task that creates a fresh DB session to perform embedding generation
+    and storage.
+    """
+    # Authenticate: allow token via query param (`?token=...`) or Authorization header
+    try:
+        from backend.core.auth.security import verify_token
+        from backend.crud import user as user_crud
+
+        auth_token = token
+        # If no token query param, try Authorization header
+        if not auth_token and request is not None:
+            auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
+            if auth_header and auth_header.lower().startswith("bearer "):
+                auth_token = auth_header.split(" ", 1)[1]
+
+        if not auth_token:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="인증 토큰이 필요합니다.")
+
+        payload = verify_token(auth_token)
+        if not payload:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="유효하지 않은 토큰입니다.")
+
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="토큰에서 사용자 ID를 찾을 수 없습니다.")
+
+        current_user = user_crud.get_user_by_id(db, user_id)
+        if not current_user:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="사용자를 찾을 수 없습니다.")
+
+        # Permission: only creator can trigger indexing
+        meeting_obj = db.query(models.Meeting).filter(models.Meeting.MEETING_ID == meeting_id).first()
+        if not meeting_obj:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="회의를 찾을 수 없습니다.")
+        if meeting_obj.CREATOR_ID != current_user.USER_ID:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="본인이 생성한 회의만 색인할 수 있습니다.")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"토큰 검증 오류: {str(e)}")
+
+    # Schedule or run indexing
+    if background_tasks is not None:
+        background_tasks.add_task(index_meeting_transcript_background, meeting_id)
+        return {"status": "scheduled"}
+    else:
+        index_meeting_transcript(db, meeting_id)
+        return {"status": "indexed"}

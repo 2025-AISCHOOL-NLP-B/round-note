@@ -23,13 +23,12 @@ export async function exportMeetingToNotion(meeting: any) {
   };
 
   try {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
     const res = await fetch(`${API_URL}/api/v1/reports/${meeting.id}/report/to-notion`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {})
       },
+      credentials: 'include', // httpOnly Cookie 전송
       body: JSON.stringify(payload),
     });
 

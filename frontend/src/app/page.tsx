@@ -1,22 +1,28 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { checkAuth } from "@/utils/auth";
 
 export default function Page() {
   const router = useRouter();
+  const [isChecking, setIsChecking] = useState(true);
 
   useEffect(() => {
-    // JWT 토큰 확인
-    const token = localStorage.getItem('access_token');
-    
-    if (token) {
-      // 토큰이 있으면 메인 페이지로
-      router.replace("/main");
-    } else {
-      // 토큰이 없으면 로그인 페이지로
-      router.replace("/login");
+    async function verifyAuth() {
+      const user = await checkAuth();
+      
+      if (user) {
+        // 인증된 경우 메인 페이지로
+        router.replace("/main");
+      } else {
+        // 인증되지 않은 경우 로그인 페이지로
+        router.replace("/login");
+      }
+      setIsChecking(false);
     }
+    
+    verifyAuth();
   }, [router]);
 
   // 리다이렉트 중에는 빈 화면 표시

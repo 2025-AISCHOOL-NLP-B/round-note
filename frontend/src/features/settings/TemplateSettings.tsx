@@ -1,15 +1,15 @@
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
 import { Button } from '@/shared/ui/button';
-import { ArrowLeft} from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { Input } from '@/shared/ui/input';
 import { Textarea } from '@/shared/ui/textarea';
 import { Badge } from '@/shared/ui/badge';
-import { 
-  FileText, 
-  Plus, 
-  Trash2, 
-  Edit3, 
+import {
+  FileText,
+  Plus,
+  Trash2,
+  Edit3,
   Check,
   X,
   CheckCircle,
@@ -17,7 +17,8 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 
-interface Template {
+
+export interface Template {
   id: string;
   name: string;
   description: string;
@@ -25,7 +26,7 @@ interface Template {
   isDefault?: boolean;
 }
 
-interface TemplateSection {
+export interface TemplateSection {
   id: string;
   title: string;
   placeholder: string;
@@ -131,7 +132,7 @@ export function TemplateSettings({ onBack }: TemplateSettingsProps) {
     }
     return DEFAULT_TEMPLATES;
   });
-  
+
 
   const [selectedTemplate, setSelectedTemplate] = useState<Template>(templates[0]);
   const [isEditing, setIsEditing] = useState(false);
@@ -197,7 +198,7 @@ export function TemplateSettings({ onBack }: TemplateSettingsProps) {
       toast.error('기본 템플릿은 삭제할 수 없습니다.');
       return;
     }
-    
+
     if (confirm('정말로 이 템플릿을 삭제하시겠습니까?')) {
       const newTemplates = templates.filter(t => t.id !== selectedTemplate.id);
       saveTemplates(newTemplates);
@@ -265,11 +266,11 @@ export function TemplateSettings({ onBack }: TemplateSettingsProps) {
             className="hover:bg-muted">
             <ArrowLeft className="w-5 h-5" />
           </Button>
-        <div>
-          <h2 className="text-primary">템플릿 보기</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            템플릿 지정 및 수정, 삭제가 가능합니다
-          </p>
+          <div>
+            <h2 className="text-primary">템플릿 보기</h2>
+            <p className="text-sm text-muted-foreground mt-1">
+              템플릿 지정 및 수정, 삭제가 가능합니다
+            </p>
           </div>
         </div>
       </div>
@@ -292,11 +293,10 @@ export function TemplateSettings({ onBack }: TemplateSettingsProps) {
                 <div
                   key={template.id}
                   onClick={() => handleSelectTemplate(template)}
-                  className={`p-3 rounded-lg border cursor-pointer transition-all ${
-                    selectedTemplate.id === template.id
+                  className={`p-3 rounded-lg border cursor-pointer transition-all ${selectedTemplate.id === template.id
                       ? 'border-primary bg-primary/5'
                       : 'border-slate-200 hover:border-primary/50 hover:bg-slate-50'
-                  }`}
+                    }`}
                 >
                   <div className="flex items-start justify-between gap-2 mb-1">
                     <div className="flex items-center gap-2">

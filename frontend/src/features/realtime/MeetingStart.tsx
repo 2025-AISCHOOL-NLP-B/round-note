@@ -3,7 +3,7 @@ import { useRouter } from 'next/navigation';
 import { MeetingInfoInput } from '@/features/meetings/MeetingInfoInput';
 import { MeetingContentInput } from './MeetingContentInput';
 import type { Meeting } from '@/features/dashboard/Dashboard';
-import { createMeeting, endMeeting, type MeetingResponse } from '@/features/meetings/meetingsService';
+import { createMeeting, updateMeeting, endMeeting, type MeetingResponse } from '@/features/meetings/meetingsService';
 import { toast } from 'sonner';
 
 interface MeetingStartProps {
@@ -19,47 +19,55 @@ export function MeetingStart({ meetings, onAddMeeting }: MeetingStartProps) {
   const [createdMeetingId, setCreatedMeetingId] = useState<string | null>(null);
 
   // 회의 전사 완료 시
-  const handleContentComplete = (content: string, analysis?: any) => {
+  const handleContentComplete = (content: string, analysis?: any, meetingId?: string | null) => {
     setTranscribedContent(content);
     setAiAnalysis(analysis);
+    if (meetingId) {
+      setCreatedMeetingId(meetingId);
+    }
     setCurrentStep('info');
   };
 
   // 정보 입력 완료 시 - 최종 저장
   const handleInfoComplete = async (info: { title: string; date: string; purpose: string; participants: string[] }) => {
-    // 1. 백엔드에 회의 생성 요청
+    // 1. 백엔드에 회의 생성/업데이트 요청
     toast.info('회의를 저장하는 중...');
     
     let meetingData;
     try {
-      meetingData = await createMeeting({
-        title: info.title,
-        purpose: info.purpose,
-        is_realtime: true,
-      });
-
-      // 2. 생성된 회의 ID 저장
-      setCreatedMeetingId(meetingData.meeting_id);
+      if (createdMeetingId) {
+        // 기존 회의 업데이트
+        meetingData = await updateMeeting(createdMeetingId, {
+          title: info.title,
+          purpose: info.purpose,
+        });
+      } else {
+        // 회의 생성 (fallback)
+        meetingData = await createMeeting({
+          title: info.title,
+          purpose: info.purpose,
+          is_realtime: true,
+        });
+        setCreatedMeetingId(meetingData.meeting_id);
+      }
     } catch (createError) {
-      console.error('[MeetingStart] Failed to create meeting:', createError);
-      toast.error('회의 생성에 실패했습니다.');
+      console.error('[MeetingStart] Failed to create/update meeting:', createError);
+      toast.error('회의 저장에 실패했습니다.');
       return;
     }
 
-    // 3. 오디오 파일 업로드
+    // 3. 오디오 파일 업로드 (WebSocket에서 이미 고품질 오디오가 저장되므로 프론트엔드 업로드 생략)
+    /*
     if (aiAnalysis?.audioBlob) {
       try {
         const formData = new FormData();
         formData.append('file', aiAnalysis.audioBlob, `${meetingData.meeting_id}.wav`);
         
-        const token = localStorage.getItem('access_token');
         const uploadResponse = await fetch(
           `${process.env.NEXT_PUBLIC_API_URL}/api/v1/meetings/${meetingData.meeting_id}/audio`,
           {
             method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-            },
+            credentials: 'include', // httpOnly Cookie 전송
             body: formData,
           }
         );
@@ -78,6 +86,7 @@ export function MeetingStart({ meetings, onAddMeeting }: MeetingStartProps) {
         toast.warning('오디오 파일 업로드 중 오류가 발생했습니다.');
       }
     }
+    */
 
     // 4. 회의 종료 + LLM 처리를 위한 헬퍼 함수들
     const extractActionItems = (text: string) => {
@@ -140,24 +149,30 @@ export function MeetingStart({ meetings, onAddMeeting }: MeetingStartProps) {
     };
 
     // 5. 백엔드 API 호출: 회의 종료 + LLM 요약/액션아이템 자동 생성
-    const token = localStorage.getItem('access_token');
     let summary = '';
     let actionItems: any[] = [];
     let audioUrl = '';    try {
+      const endBody: any = {
+        status: 'COMPLETED',
+        ended_at: new Date().toISOString(),
+        content: transcribedContent,
+      };
+
+      // 기존에 생성된 회의가 없어서 새로 만든 경우에만 audio_url을 추측해서 보냄
+      // (기존 회의가 있었다면 WebSocket이 이미 audio_url을 설정했을 것이므로 덮어쓰지 않음)
+      if (!createdMeetingId) {
+         endBody.audio_url = `./audio_storage/${meetingData.meeting_id}.wav`;
+      }
+
       const endResponse = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL}/api/v1/meetings/${meetingData.meeting_id}/end`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
           },
-          body: JSON.stringify({
-            status: 'COMPLETED',
-            ended_at: new Date().toISOString(),
-            content: transcribedContent,
-            audio_url: `./audio_storage/${meetingData.meeting_id}.wav`
-          }),
+          credentials: 'include', // httpOnly Cookie 전송
+          body: JSON.stringify(endBody),
         }
       );
       
@@ -294,9 +309,7 @@ export function MeetingStart({ meetings, onAddMeeting }: MeetingStartProps) {
           `${process.env.NEXT_PUBLIC_API_URL}/api/v1/meetings/${meetingData.meeting_id}`,
           {
             method: 'GET',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-            },
+            credentials: 'include', // httpOnly Cookie 전송
           }
         );
         
@@ -352,6 +365,7 @@ export function MeetingStart({ meetings, onAddMeeting }: MeetingStartProps) {
         }}
         onComplete={handleContentComplete}
         onBack={() => {}} // 뒤로가기 없음
+        meetings={meetings} 
       />
     );
   }
@@ -359,30 +373,46 @@ export function MeetingStart({ meetings, onAddMeeting }: MeetingStartProps) {
   // 2단계: 정보 입력 (제목, 목적, 참석자 등)
   // AI 분석 결과를 바탕으로 초기값 설정
   const generateDefaultTitle = () => {
-    // 내용이 없으면 날짜 기반 디폴트 제목
+    const now = new Date();
+
+    // 날짜 (한국식 표기)
+    const dateStr = now.toLocaleDateString("ko-KR", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    }); // "2025년 11월 24일"
+
+    // 시간 (시:분)
+    const timeStr = `${String(now.getHours()).padStart(2, "0")}시`;
+
+    // 오늘 날짜 기준 회의 개수
+    const todayISO = now.toISOString().split("T")[0]; // YYYY-MM-DD
+    const count = meetings.filter((m) => m.date === todayISO).length + 1;
+
+    // 1) 내용이 없으면 날짜+시간 기반 제목
     if (!transcribedContent.trim()) {
-      const now = new Date();
-      const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
-      const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-      const count = meetings.filter(m => m.date === dateStr).length + 1;
       return `${dateStr} ${timeStr} 회의(${count})`;
     }
-    
-    // AI 분석 결과에서 제목 추출
+
+    // 2) AI 분석 결과에서 제목 추출
     if (aiAnalysis?.title) {
-      return aiAnalysis.title;
+      return `${dateStr} ${timeStr} ${aiAnalysis.title}(${count})`;
     }
-    
-    // 내용의 첫 줄을 제목으로 사용 (최대 50자)
-    const firstLine = transcribedContent.split('\n')[0].trim();
-    if (firstLine) {
-      return firstLine.substring(0, 50) + (firstLine.length > 50 ? '...' : '');
+
+    // 3) 내용의 첫 줄을 제목으로 사용 (단, 안내 문구는 제외)
+    const firstLine = transcribedContent.split("\n")[0].trim();
+    if (
+      firstLine &&
+      !firstLine.includes("실시간 전사를 시작합니다") &&
+      !firstLine.includes("회의 시작")
+    ) {
+      const summary =
+        firstLine.substring(0, 50) + (firstLine.length > 50 ? "..." : "");
+      return `${dateStr} ${timeStr} ${summary} 회의(${count})`;
     }
-    
-    // 기본 제목
-    const dateStr = new Date().toISOString().split('T')[0];
-    const count = meetings.filter(m => m.date === dateStr).length + 1;
-    return `${dateStr} 회의(${count})`;
+
+    // 4) 기본 제목
+    return `${dateStr} ${timeStr} 회의(${count})`;
   };
 
   const generateDefaultPurpose = () => {
@@ -390,30 +420,30 @@ export function MeetingStart({ meetings, onAddMeeting }: MeetingStartProps) {
     if (aiAnalysis?.purpose) {
       return aiAnalysis.purpose;
     }
-    
+
     // 요약의 일부를 목적으로 사용
     if (aiAnalysis?.summary) {
-      const summaryFirstLine = aiAnalysis.summary.split('\n')[0].trim();
+      const summaryFirstLine = aiAnalysis.summary.split("\n")[0].trim();
       return summaryFirstLine.substring(0, 100);
     }
-    
-    return '';
+
+    return "";
   };
 
   return (
-    <div className="bg-white rounded-2xl p-8 shadow-sm border border-border w-[1100PX]  max-w-[1100px] mx-auto">
+    <div className="bg-white rounded-2xl p-8 shadow-sm border border-border w-[1100px] max-w-[1100px] mx-auto">
       <div className="mb-6">
         <h2 className="text-foreground mb-2">회의 정보 입력</h2>
         <p className="text-sm text-muted-foreground">
           회의 전사가 완료되었습니다. 회의 정보를 확인하고 수정해주세요.
         </p>
       </div>
-      <MeetingInfoInput 
+      <MeetingInfoInput
         initialInfo={{
           title: generateDefaultTitle(),
-          date: new Date().toISOString().split('T')[0],
+          date: new Date().toISOString().split("T")[0],
           purpose: generateDefaultPurpose(),
-          participants: aiAnalysis?.participants?.join(', ') || ''
+          participants: aiAnalysis?.participants?.join(", ") || "",
         }}
         meetings={meetings}
         onComplete={handleInfoComplete}

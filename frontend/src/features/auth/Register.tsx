@@ -72,15 +72,16 @@ export function Register({ onRegister, onBackToLogin }: RegisterProps) {
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include', // httpOnly Cookie를 받기 위해 필요
         body: JSON.stringify({ email, password, name }),
       });
 
       if (response.ok) {
-        // 성공 안내 후 로그인 페이지로 이동시키기 (자동 로그인하지 않음)
-        toast.success('회원가입이 완료되었습니다. 로그인 페이지로 이동합니다.');
+        // 회원가입 성공 - 로그인 페이지로 이동
+        toast.success('회원가입이 완료되었습니다. 로그인해주세요.');
         setTimeout(() => {
-          onBackToLogin();
-        }, 800);
+          onBackToLogin(); // 로그인 페이지로 이동
+        }, 1000);
       } else {
         const errorData = await response.json();
         setError(errorData.detail || '회원가입에 실패했습니다.');

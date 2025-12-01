@@ -33,6 +33,7 @@ interface MeetingAnalysisProps {
 export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: MeetingAnalysisProps) {
   const [meeting, setMeeting] = useState(meetingProp);
   const [activeTab, setActiveTab] = useState('actionitems');
+  const [isAddingActionItem, setIsAddingActionItem] = useState(false);
   const [newActionItem, setNewActionItem] = useState({ text: '', assignee: '', jiraAssignee: '', dueDate: '', priority: '중간' });
   const [editingId, setEditingId] = useState<string | null>(null);
   
@@ -57,10 +58,14 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
     title: string;
     description: string;
     assignee_name: string;
+    original_assignee_name?: string;
     jira_assignee_id: string | null;
     priority: string;
     due_dt: string;
+    isNew?: boolean;
   }>>([]);
+  const [deletedJiraItems, setDeletedJiraItems] = useState<string[]>([]);
+  const [itemsToSync, setItemsToSync] = useState<string[] | null>(null);
 
   // Jira 연동 상태 확인 및 프로젝트 목록 로드
   React.useEffect(() => {
@@ -125,16 +130,13 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
     try {
       const { createActionItem } = await import('@/features/meetings/reportsService');
       
-      // 우선순위 매핑: Jira 프로젝트 선택 시 Jira 우선순위를 그대로 사용, 아니면 한글->영문 변환
-      let priorityValue = newActionItem.priority;
-      if (!selectedJiraProject) {
-        const priorityMap: Record<string, string> = {
-          '높음': 'HIGH',
-          '중간': 'MEDIUM',
-          '낮음': 'LOW'
-        };
-        priorityValue = priorityMap[newActionItem.priority] || 'MEDIUM';
-      }
+      // 우선순위 매핑: 한글->영문 변환
+      const priorityMap: Record<string, string> = {
+        '높음': 'HIGH',
+        '중간': 'MEDIUM',
+        '낮음': 'LOW'
+      };
+      const priorityValue = priorityMap[newActionItem.priority] || 'MEDIUM';
 
       const newItem = await createActionItem(meeting.id, {
         title: newActionItem.text,
@@ -142,7 +144,7 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
         due_dt: newActionItem.dueDate || undefined,
         priority: priorityValue,
         assignee_name: newActionItem.assignee || undefined,
-        jira_assignee_id: newActionItem.jiraAssignee || undefined,
+        jira_assignee_id: undefined,
       });
 
       // 영문 -> 한글 매핑
@@ -169,6 +171,7 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
       }
 
       setNewActionItem({ text: '', assignee: '', jiraAssignee: '', dueDate: '', priority: '중간' });
+      setIsAddingActionItem(false);
       toast.success('액션 아이템이 추가되었습니다.');
     } catch (error: any) {
       toast.error(`액션 아이템 추가 실패: ${error.message}`);
@@ -317,6 +320,8 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
       const defaultProject = projectsData.default_project_key || projectsData.projects[0]?.key || '';
       setSelectedProject(defaultProject);
       
+      let currentJiraUsers: Array<{ account_id: string; display_name: string; email: string }> = [];
+
       // 기본 프로젝트의 사용자 및 우선순위 조회
       if (defaultProject) {
         try {
@@ -326,6 +331,7 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
           ]);
           setJiraUsers(usersData.users);
           setJiraPriorities(prioritiesData.priorities);
+          currentJiraUsers = usersData.users || [];
         } catch (error) {
           console.error('Failed to load Jira project data:', error);
         }
@@ -348,6 +354,24 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
             normalizedDate = rawDate;
           }
         }
+
+        // Jira 담당자 매칭 로직 추가
+        let jiraAssigneeId = item.jira_assignee_id || '';
+        let assigneeName = item.assignee || '';
+
+        if (!jiraAssigneeId && assigneeName && assigneeName !== '미지정' && currentJiraUsers.length > 0) {
+            // 이름으로 매칭 시도 (정확히 일치하거나 포함되는 경우)
+            const matchedUser = currentJiraUsers.find(u => 
+                u.display_name === assigneeName || 
+                u.display_name.includes(assigneeName) ||
+                assigneeName.includes(u.display_name)
+            );
+            
+            if (matchedUser) {
+                jiraAssigneeId = matchedUser.account_id;
+                console.log(`[Jira Sync] Auto-matched assignee: ${assigneeName} -> ${matchedUser.display_name}`);
+            }
+        }
         
         console.log('[Jira Edit] Item mapping:', { 
           original: item, 
@@ -355,21 +379,24 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
           id: item.id, 
           using: itemId,
           raw_date: rawDate,
-          normalized_date: normalizedDate
+          normalized_date: normalizedDate,
+          jira_assignee_id: jiraAssigneeId
         });
         
         return {
           item_id: itemId,
           title: item.title || item.text,
           description: item.description || '',
-          assignee_name: item.assignee || '',
-          jira_assignee_id: item.jira_assignee_id || '',
+          assignee_name: assigneeName,
+          original_assignee_name: assigneeName,
+          jira_assignee_id: jiraAssigneeId,
           priority: item.priority || 'MEDIUM',
           due_dt: normalizedDate
         };
       });
       
       setJiraEditItems(itemsForEdit);
+      setDeletedJiraItems([]);
       setShowJiraEditModal(true);
     } catch (error: any) {
       toast.error(`Jira 프로젝트 조회 실패: ${error.message}`);
@@ -380,14 +407,60 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
 
   // Notion 내보내기 핸들러
   const [isLoadingNotion, setIsLoadingNotion] = useState(false);
+  const [showNotionPageModal, setShowNotionPageModal] = useState(false);
+  const [notionPages, setNotionPages] = useState<Array<{ id: string; title: string }>>([]);
+  const [selectedNotionPage, setSelectedNotionPage] = useState<string>('');
+  const [loadingNotionPages, setLoadingNotionPages] = useState(false);
   
   const handleExportToNotion = async () => {
     try {
+      const { getMyNotionPages, getNotionSettings } = await import('@/features/meetings/reportsService');
+      
+      // Notion 설정 확인
+      try {
+        const settings = await getNotionSettings();
+        if (!settings.is_active) {
+          toast.error('Notion 연동이 비활성화되어 있습니다. 설정 페이지에서 활성화해주세요.');
+          return;
+        }
+      } catch (error: any) {
+        // 404 에러 = 설정이 없음
+        if (error.message.includes('not found') || error.message.includes('404')) {
+          toast.error('Notion 연동을 먼저 설정해주세요. 설정 페이지로 이동합니다.');
+          // 설정 페이지로 이동하는 로직 추가 가능
+          return;
+        }
+        throw error;
+      }
+      
+      // 페이지 선택 모달 열기
+      setShowNotionPageModal(true);
+      setLoadingNotionPages(true);
+      
+      // 페이지 목록 가져오기 (저장된 토큰 사용)
+      const pagesData = await getMyNotionPages();
+      setNotionPages(pagesData.pages || []);
+      setLoadingNotionPages(false);
+    } catch (error: any) {
+      toast.error(`Notion 연동 오류: ${error.message}`);
+      setShowNotionPageModal(false);
+      setLoadingNotionPages(false);
+    }
+  };
+  
+  const confirmNotionExport = async () => {
+    if (!selectedNotionPage) {
+      toast.error('페이지를 선택해주세요');
+      return;
+    }
+    
+    try {
       setIsLoadingNotion(true);
+      setShowNotionPageModal(false);
       toast.info('Notion에 내보내는 중...');
       
       const { exportToNotionComprehensive } = await import('@/features/meetings/reportsService');
-      const result = await exportToNotionComprehensive(meeting.id);
+      const result = await exportToNotionComprehensive(meeting.id, selectedNotionPage);
       
       if (result.success) {
         toast.success('Notion에 회의록이 생성되었습니다!');
@@ -399,13 +472,10 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
       }
     } catch (error: any) {
       console.error('Notion export error:', error);
-      if (error.message?.includes('설정')) {
-        toast.error('Notion을 먼저 연동해주세요. 환경 변수를 확인하세요.');
-      } else {
-        toast.error(`Notion 내보내기 실패: ${error.message}`);
-      }
+      toast.error(`Notion 내보내기 실패: ${error.message}`);
     } finally {
       setIsLoadingNotion(false);
+      setSelectedNotionPage('');
     }
   };
 
@@ -421,7 +491,7 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
       setIsLoadingJira(true);
       toast.info('Jira 동기화 중...');
       
-      const result = await pushToJira(meeting.id, selectedProject);
+      const result = await pushToJira(meeting.id, selectedProject, itemsToSync || undefined);
       
       setJiraSyncProgress({
         total: result.summary.total,
@@ -450,11 +520,8 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
       console.log('[Jira Sync] onUpdateMeeting exists:', !!onUpdateMeeting);
       if (onUpdateMeeting) {
         try {
-          const token = localStorage.getItem('access_token');
           const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/meetings/${meeting.id}`, {
-            headers: {
-              'Authorization': `Bearer ${token}`
-            }
+            credentials: 'include'
           });
           
           if (response.ok) {
@@ -603,7 +670,7 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
     <div className="space-y-4 md:space-y-6">
       <div className="flex items-center gap-2">
         <Brain className="w-5 h-5 md:w-6 md:h-6 text-purple-600" />
-        <h2 className="text-purple-600">심층 분석</h2>
+        <h2 className="text-purple-600">액션 및 분석</h2>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -620,148 +687,9 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
         </TabsList>
 
         <TabsContent value="actionitems" className="space-y-4 mt-4">
-          {/* 액션 아이템 추가 */}
-          <Card className="border-primary/20 bg-gradient-to-br from-blue-50 to-indigo-50">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base md:text-lg">
-                <Plus className="w-5 h-5 text-primary" />
-                새 액션 아이템 추가
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {/* Jira 프로젝트 선택 (연동된 경우만 표시) */}
-              {jiraConnected && availableJiraProjects.length > 0 && (
-                <div className="space-y-2 p-3 bg-blue-50 rounded-lg border border-blue-200">
-                  <label className="text-sm font-medium text-blue-900">🔷 Jira 프로젝트 (선택사항)</label>
-                  <select
-                    value={selectedJiraProject}
-                    onChange={(e) => setSelectedJiraProject(e.target.value)}
-                    className="w-full h-10 px-3 rounded-md border border-blue-300 bg-white"
-                  >
-                    <option value="">선택 안 함 (일반 액션 아이템)</option>
-                    {availableJiraProjects.map(project => (
-                      <option key={project.key} value={project.key}>
-                        {project.name} ({project.key})
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-blue-700">
-                    프로젝트를 선택하면 Jira 담당자와 우선순위를 사용할 수 있습니다
-                  </p>
-                </div>
-              )}
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium">액션 아이템 내용</label>
-                <Textarea
-                  value={newActionItem.text}
-                  onChange={(e) => setNewActionItem({ ...newActionItem, text: e.target.value })}
-                  placeholder="예: 다음 주까지 마케팅 계획서 작성"
-                  className="min-h-[80px]"
-                />
-              </div>
-
-              {/* Jira 프로젝트 비선택 시에만 일반 담당자 입력란 표시 */}
-              {!selectedJiraProject && (
-                <div className="space-y-2">
-                  <label className="text-sm font-medium flex items-center gap-1">
-                    <User className="w-4 h-4" />
-                    담당자
-                  </label>
-                  <Input
-                    type="text"
-                    value={newActionItem.assignee}
-                    onChange={(e) => setNewActionItem({ ...newActionItem, assignee: e.target.value })}
-                    placeholder="예: 홍길동, 김철수"
-                    className="w-full"
-                  />
-                </div>
-              )}
-
-              {/* Jira 프로젝트 선택 시 Jira 담당자 선택 */}
-              {selectedJiraProject && jiraUsers.length > 0 && (
-                <div className="space-y-2">
-                  <label className="text-sm font-medium flex items-center gap-1">
-                    <User className="w-4 h-4" />
-                    Jira 담당자
-                  </label>
-                  <select
-                    value={newActionItem.jiraAssignee || ''}
-                    onChange={(e) => {
-                      const accountId = e.target.value;
-                      const selectedUser = jiraUsers.find(u => u.account_id === accountId);
-                      setNewActionItem({ 
-                        ...newActionItem, 
-                        jiraAssignee: accountId,
-                        assignee: selectedUser ? selectedUser.display_name : ''
-                      });
-                    }}
-                    className="w-full h-10 px-3 rounded-md border border-slate-200 bg-white"
-                    disabled={loadingJiraData}
-                  >
-                    <option value="">담당자 선택</option>
-                    {jiraUsers.map(user => (
-                      <option key={user.account_id} value={user.account_id}>
-                        {user.display_name} ({user.email})
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-gray-500">
-                    선택한 담당자가 Round Note와 Jira 모두에 설정됩니다.
-                  </p>
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium flex items-center gap-1">
-                    <Clock className="w-4 h-4" />
-                    마감일
-                  </label>
-                  <Input
-                    type="date"
-                    value={newActionItem.dueDate}
-                    onChange={(e) => setNewActionItem({ ...newActionItem, dueDate: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">우선순위</label>
-                  {selectedJiraProject && jiraPriorities.length > 0 ? (
-                    <select
-                      value={newActionItem.priority}
-                      onChange={(e) => setNewActionItem({ ...newActionItem, priority: e.target.value })}
-                      className="w-full h-10 px-3 rounded-md border border-slate-200 bg-white"
-                      disabled={loadingJiraData}
-                    >
-                      {jiraPriorities.map(priority => (
-                        <option key={priority.id} value={priority.name}>
-                          {priority.name}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <select
-                      value={newActionItem.priority}
-                      onChange={(e) => setNewActionItem({ ...newActionItem, priority: e.target.value })}
-                      className="w-full h-10 px-3 rounded-md border border-slate-200 bg-white"
-                    >
-                      <option value="높음">높음</option>
-                      <option value="중간">중간</option>
-                      <option value="낮음">낮음</option>
-                    </select>
-                  )}
-                </div>
-              </div>
-              <Button onClick={handleAddActionItem} className="w-full gap-2" disabled={loadingJiraData}>
-                <Plus className="w-4 h-4" />
-                {loadingJiraData ? '로딩 중...' : '액션 아이템 추가'}
-              </Button>
-            </CardContent>
-          </Card>
-
           {/* 액션 아이템 목록 */}
           <Card>
-            <CardHeader>
+            <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle className="flex items-center gap-2 text-base md:text-lg">
                 <Target className="w-5 h-5 text-blue-600" />
                 액션 아이템 목록
@@ -769,13 +697,99 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
                   {meeting.actionItems.filter(a => a.completed).length} / {meeting.actionItems.length} 완료
                 </Badge>
               </CardTitle>
+              <Button 
+                size="sm" 
+                variant="outline" 
+                className="gap-1"
+                onClick={() => setIsAddingActionItem(true)}
+                disabled={isAddingActionItem}
+              >
+                <Plus className="w-4 h-4" />
+                추가
+              </Button>
             </CardHeader>
             <CardContent>
-              {meeting.actionItems.length === 0 ? (
+              {/* 인라인 추가 폼 */}
+              {isAddingActionItem && (
+                <div className="mb-4 p-4 border rounded-lg bg-blue-50/50 border-blue-100 animate-in fade-in slide-in-from-top-2">
+                  <div className="space-y-3">
+                    <div className="flex items-start gap-3">
+                      <div className="mt-2">
+                        <Target className="w-4 h-4 text-blue-500" />
+                      </div>
+                      <div className="flex-1 space-y-3">
+                        <Textarea
+                          value={newActionItem.text}
+                          onChange={(e) => setNewActionItem({ ...newActionItem, text: e.target.value })}
+                          placeholder="새로운 액션 아이템 내용을 입력하세요..."
+                          className="min-h-[60px] bg-white"
+                          autoFocus
+                        />
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-xs text-gray-500 flex items-center gap-1">
+                              <User className="w-3 h-3" />
+                              담당자
+                            </label>
+                            <Input
+                              type="text"
+                              value={newActionItem.assignee}
+                              onChange={(e) => setNewActionItem({ ...newActionItem, assignee: e.target.value })}
+                              placeholder="담당자 이름"
+                              className="h-8 text-sm bg-white"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs text-gray-500 flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              마감일
+                            </label>
+                            <Input
+                              type="date"
+                              value={newActionItem.dueDate}
+                              onChange={(e) => setNewActionItem({ ...newActionItem, dueDate: e.target.value })}
+                              className="h-8 text-sm bg-white"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs text-gray-500">우선순위</label>
+                            <select
+                              value={newActionItem.priority}
+                              onChange={(e) => setNewActionItem({ ...newActionItem, priority: e.target.value })}
+                              className="w-full h-8 px-2 text-sm rounded-md border border-slate-200 bg-white"
+                            >
+                              <option value="높음">높음</option>
+                              <option value="중간">중간</option>
+                              <option value="낮음">낮음</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div className="flex justify-end gap-2 pt-1">
+                          <Button 
+                            size="sm" 
+                            variant="ghost" 
+                            onClick={() => setIsAddingActionItem(false)}
+                          >
+                            취소
+                          </Button>
+                          <Button 
+                            size="sm" 
+                            onClick={handleAddActionItem}
+                          >
+                            저장
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {meeting.actionItems.length === 0 && !isAddingActionItem ? (
                 <div className="text-center py-8 text-gray-500">
                   <Target className="w-12 h-12 mx-auto mb-2 text-gray-300" />
                   <p>아직 액션 아이템이 없습니다</p>
-                  <p className="text-xs mt-1">위의 양식을 통해 액션 아이템을 추가하세요</p>
+                  <p className="text-xs mt-1">상단의 추가 버튼을 눌러 액션 아이템을 생성하세요</p>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -809,18 +823,15 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
                           </p>
                         )}
                         <div className="flex gap-1 shrink-0">
-                          {item.priority && (
-                            <Badge 
-                              variant="secondary" 
-                              className={`text-xs ${
-                                item.priority === '높음' ? 'bg-red-100 text-red-700' :
-                                item.priority === '중간' ? 'bg-yellow-100 text-yellow-700' :
-                                'bg-gray-100 text-gray-700'
-                              }`}
-                            >
-                              {item.priority}
-                            </Badge>
-                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleExportToGoogleCalendar(item)}
+                            className="h-6 w-6 p-0 rounded-full hover:bg-blue-50 text-gray-400 hover:text-blue-600"
+                            title="구글 캘린더에 추가"
+                          >
+                            <CalendarIcon className="w-4 h-4" />
+                          </Button>
                         </div>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 ml-8">
@@ -856,17 +867,21 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
                           />
                         </div>
                         <div className="space-y-1">
-                          <label className="text-xs text-gray-500">액션</label>
+                          <label className="text-xs text-gray-500">우선순위 및 관리</label>
                           <div className="flex gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleExportToGoogleCalendar(item)}
-                              className="flex-1 gap-1 h-8 text-xs"
+                            <select
+                              value={item.priority || '중간'}
+                              onChange={(e) => handleUpdateActionItem(item.id, 'priority', e.target.value)}
+                              className={`flex-1 h-8 px-2 text-xs rounded-md border border-slate-200 ${
+                                item.priority === '높음' ? 'bg-red-50 text-red-700 border-red-200' :
+                                item.priority === '중간' ? 'bg-yellow-50 text-yellow-700 border-yellow-200' :
+                                'bg-gray-50 text-gray-700 border-gray-200'
+                              }`}
                             >
-                              <CalendarIcon className="w-3 h-3" />
-                              <span className="hidden md:inline">캘린더</span>
-                            </Button>
+                              <option value="높음">높음</option>
+                              <option value="중간">중간</option>
+                              <option value="낮음">낮음</option>
+                            </select>
                             <Button
                               variant="destructive"
                               size="sm"
@@ -1109,28 +1124,63 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
             </div>
             
             <div className="p-6 space-y-4 border-b">
-              <div>
-                <label className="text-sm font-medium text-gray-700 mb-2 block">
-                  Jira 프로젝트
-                </label>
-                <select
-                  value={selectedProject}
-                  onChange={(e) => setSelectedProject(e.target.value)}
-                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#0052CC] focus:border-transparent"
+              <div className="flex justify-between items-end">
+                <div className="flex-1 mr-4">
+                  <label className="text-sm font-medium text-gray-700 mb-2 block">
+                    Jira 프로젝트
+                  </label>
+                  <select
+                    value={selectedProject}
+                    onChange={(e) => setSelectedProject(e.target.value)}
+                    className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#0052CC] focus:border-transparent"
+                  >
+                    {jiraProjects.map((project) => (
+                      <option key={project.key} value={project.key}>
+                        {project.name} ({project.key})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <Button
+                  onClick={() => {
+                    const tempId = `temp-${Date.now()}`;
+                    setJiraEditItems([
+                      {
+                        item_id: tempId,
+                        title: '',
+                        description: '',
+                        assignee_name: '미지정',
+                        jira_assignee_id: null,
+                        priority: 'MEDIUM',
+                        due_dt: '',
+                        isNew: true
+                      },
+                      ...jiraEditItems
+                    ]);
+                  }}
+                  className="gap-2 bg-[#0052CC] hover:bg-[#0747A6]"
                 >
-                  {jiraProjects.map((project) => (
-                    <option key={project.key} value={project.key}>
-                      {project.name} ({project.key})
-                    </option>
-                  ))}
-                </select>
+                  <Plus className="w-4 h-4" />
+                  추가
+                </Button>
               </div>
             </div>
             
             <div className="flex-1 overflow-y-auto p-6">
               <div className="space-y-4">
                 {jiraEditItems.map((item, index) => (
-                  <Card key={item.item_id || `jira-edit-${index}`} className="shadow-sm">
+                  <Card key={item.item_id || `jira-edit-${index}`} className="shadow-sm relative group">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-red-500"
+                      onClick={() => {
+                        // 목록에서만 제거 (동기화 대상에서 제외)
+                        setJiraEditItems(jiraEditItems.filter((_, i) => i !== index));
+                      }}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
                     <CardContent className="pt-4">
                       <div className="space-y-3">
                         <div>
@@ -1195,7 +1245,11 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
                               className="w-full p-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-[#0052CC] focus:border-transparent"
                               disabled={loadingJiraData}
                             >
-                              <option value="">미지정</option>
+                              <option value="">
+                                {item.original_assignee_name && item.original_assignee_name !== '미지정' 
+                                  ? `미지정 (기존: ${item.original_assignee_name})` 
+                                  : '미지정'}
+                              </option>
                               {jiraUsers.map((user) => (
                                 <option key={user.account_id} value={user.account_id}>
                                   {user.display_name}
@@ -1269,44 +1323,57 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
                   onClick={async () => {
                     // 편집된 데이터로 액션 아이템 업데이트
                     try {
-                      const { updateActionItem } = await import('@/features/meetings/reportsService');
+                      const { updateActionItem, createActionItem } = await import('@/features/meetings/reportsService');
                       
                       setLoadingJiraData(true);
                       let successCount = 0;
                       let failedCount = 0;
                       const errors: Array<{ item: string; error: string }> = [];
-                      
+                      const finalItemIds: string[] = [];
+
+                      // 생성 및 수정 처리
                       for (const item of jiraEditItems) {
-                        console.log('[Jira Update] Updating item:', item.item_id, 'for meeting:', meeting.id);
-                        console.log('[Jira Update] Item data:', {
-                          title: item.title,
-                          assignee_name: item.assignee_name,
-                          jira_assignee_id: item.jira_assignee_id
-                        });
+                        console.log('[Jira Update] Processing item:', item.item_id, 'isNew:', item.isNew);
                         
                         try {
-                          // 날짜 검증: 빈 문자열이나 잘못된 값은 undefined로 전송
+                          // 날짜 검증
                           let validDueDate: string | undefined = undefined;
                           if (item.due_dt && item.due_dt.trim() && item.due_dt !== '미정') {
-                            // YYYY-MM-DD 형식 검증
                             const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
                             if (dateRegex.test(item.due_dt)) {
                               validDueDate = item.due_dt;
-                            } else {
-                              console.warn('[Jira Update] Invalid date format:', item.due_dt);
                             }
                           }
-                          
-                          await updateActionItem(meeting.id, item.item_id, {
-                            title: item.title,
-                            description: item.description,
-                            assignee_name: item.assignee_name || '미지정',
-                            jira_assignee_id: item.jira_assignee_id || undefined,
-                            priority: item.priority,
-                            due_dt: validDueDate
-                          });
-                          console.log('[Jira Update] Success for item:', item.item_id);
-                          successCount++;
+
+                          if (item.isNew) {
+                            // 새 항목 생성
+                            if (!item.title.trim()) continue; // 제목 없으면 스킵
+
+                            const newItem = await createActionItem(meeting.id, {
+                              title: item.title,
+                              description: item.description,
+                              assignee_name: item.assignee_name || '미지정',
+                              jira_assignee_id: item.jira_assignee_id || undefined,
+                              priority: item.priority,
+                              due_dt: validDueDate
+                            });
+                            console.log('[Jira Update] Created new item:', item.title);
+                            finalItemIds.push(newItem.item_id);
+                            successCount++;
+                          } else {
+                            // 기존 항목 수정
+                            await updateActionItem(meeting.id, item.item_id, {
+                              title: item.title,
+                              description: item.description,
+                              assignee_name: item.assignee_name || '미지정',
+                              jira_assignee_id: item.jira_assignee_id || undefined,
+                              priority: item.priority,
+                              due_dt: validDueDate
+                            });
+                            console.log('[Jira Update] Updated item:', item.item_id);
+                            finalItemIds.push(item.item_id);
+                            successCount++;
+                          }
                         } catch (err: any) {
                           console.error('[Jira Update] Failed for item:', item.item_id, err);
                           failedCount++;
@@ -1317,73 +1384,53 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
                         }
                       }
                       
-                      // 일부 성공 시에도 계속 진행
                       if (failedCount > 0) {
-                        console.warn(`[Jira Update] ${failedCount} items failed, ${successCount} succeeded`);
-                        toast.warning(`${successCount}개 업데이트 성공, ${failedCount}개 실패`);
-                        // 에러 상세 표시
-                        errors.forEach(({ item, error }) => {
-                          console.error(`[Jira Update] ${item}: ${error}`);
-                        });
+                        toast.warning(`${successCount}개 처리 성공, ${failedCount}개 실패`);
                       }
                       
-                      // 회의 데이터 새로고침
-                      console.log('[Jira Edit] onUpdateMeeting exists:', !!onUpdateMeeting);
-                      console.log('[Jira Edit] Edited items:', jiraEditItems);
+                      // 동기화할 아이템 ID 목록 설정
+                      setItemsToSync(finalItemIds);
                       
-                      const updatedMeeting = {
-                        ...meeting,
-                        actionItems: meeting.actionItems.map(ai => {
-                          const aiId = ai.item_id || ai.id;
-                          const editedItem = jiraEditItems.find(ei => ei.item_id === aiId);
-                          if (editedItem) {
-                            console.log(`[Jira Edit] Updating action item ${aiId}:`, {
-                              old_assignee: ai.assignee,
-                              new_assignee: editedItem.assignee_name,
-                              old_jira_assignee: ai.jira_assignee_id,
-                              new_jira_assignee: editedItem.jira_assignee_id
-                            });
-                            return {
-                              ...ai,
-                              id: aiId,
-                              item_id: aiId,
-                              text: editedItem.title,
-                              title: editedItem.title,
-                              description: editedItem.description,
-                              assignee: editedItem.assignee_name || '미지정',
-                              jira_assignee_id: editedItem.jira_assignee_id || null,
-                              priority: editedItem.priority.toLowerCase(),
-                              due_date: editedItem.due_dt,
-                              dueDate: editedItem.due_dt ? new Date(editedItem.due_dt).toISOString().split('T')[0] : ''
-                            };
-                          }
-                          return ai;
-                        })
-                      };
-                      
-                      console.log('[Jira Edit] Updated meeting object:', updatedMeeting);
-                      
-                      // 로컬 상태 즉시 업데이트
-                      setMeeting(updatedMeeting);
-                      console.log('[Jira Edit] Local meeting state updated');
-                      
-                      // 부모 컴포넌트에도 전파
+                      // 회의 데이터 새로고침 (서버에서 최신 데이터 가져오기)
                       if (onUpdateMeeting) {
-                        console.log('[Jira Edit] Calling onUpdateMeeting with:', updatedMeeting);
-                        onUpdateMeeting(updatedMeeting);
-                        console.log('[Jira Edit] onUpdateMeeting called successfully');
-                      } else {
-                        console.warn('[Jira Edit] onUpdateMeeting is not provided');
+                        try {
+                          const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/meetings/${meeting.id}`, {
+                            credentials: 'include'
+                          });
+                          
+                          if (response.ok) {
+                            const updatedMeetingData = await response.json();
+                            const updatedMeeting = {
+                              ...meeting,
+                              actionItems: (updatedMeetingData.action_items || []).map((item: any) => ({
+                                id: item.item_id,
+                                item_id: item.item_id,
+                                text: item.title || item.description || '',
+                                title: item.title,
+                                description: item.description,
+                                assignee: item.assignee_name || '미지정',
+                                dueDate: item.due_dt ? new Date(item.due_dt).toISOString().split('T')[0] : '',
+                                due_date: item.due_dt,
+                                completed: item.status === 'DONE',
+                                priority: item.priority?.toLowerCase() || 'medium',
+                                jira_assignee_id: item.jira_assignee_id
+                              }))
+                            };
+                            
+                            setMeeting(updatedMeeting);
+                            onUpdateMeeting(updatedMeeting);
+                          }
+                        } catch (error) {
+                          console.error('[Jira Update] Failed to refresh meeting data:', error);
+                        }
                       }
                       
-                      // 성공한 경우에만 성공 메시지
                       if (successCount > 0 && failedCount === 0) {
                         toast.success('액션 아이템이 업데이트되었습니다');
                       }
                       
                       setShowJiraEditModal(false);
                       
-                      // 일부 성공이라도 동기화 모달 표시
                       if (successCount > 0) {
                         setShowJiraModal(true);
                       }
@@ -1483,6 +1530,73 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
                   자동으로 닫힙니다...
                 </p>
               </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Notion 페이지 선택 모달 */}
+      {showNotionPageModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-md w-full p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold">Notion 페이지 선택</h3>
+              <button 
+                onClick={() => {
+                  setShowNotionPageModal(false);
+                  setSelectedNotionPage('');
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                ✕
+              </button>
+            </div>
+            
+            {loadingNotionPages ? (
+              <div className="text-center py-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto"></div>
+                <p className="text-sm text-gray-600 mt-4">페이지 목록 로딩 중...</p>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-700">
+                    회의록을 생성할 페이지를 선택하세요
+                  </label>
+                  <select
+                    value={selectedNotionPage}
+                    onChange={(e) => setSelectedNotionPage(e.target.value)}
+                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-purple-500"
+                  >
+                    <option value="">페이지 선택...</option>
+                    {notionPages.map((page) => (
+                      <option key={page.id} value={page.id}>
+                        {page.title || 'Untitled'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                
+                <div className="flex gap-2 mt-6">
+                  <Button
+                    onClick={() => {
+                      setShowNotionPageModal(false);
+                      setSelectedNotionPage('');
+                    }}
+                    variant="outline"
+                    className="flex-1"
+                  >
+                    취소
+                  </Button>
+                  <Button
+                    onClick={confirmNotionExport}
+                    disabled={!selectedNotionPage || isLoadingNotion}
+                    className="flex-1"
+                  >
+                    {isLoadingNotion ? '내보내는 중...' : '내보내기'}
+                  </Button>
+                </div>
+              </>
             )}
           </div>
         </div>

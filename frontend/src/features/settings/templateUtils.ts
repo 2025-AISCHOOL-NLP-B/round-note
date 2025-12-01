@@ -23,10 +23,13 @@ export function getActiveTemplate(): Template | null {
 
 /**
  * Apply template structure to a meeting summary
+ * Simple version: just returns the summary as-is for the first section
+ * More sophisticated parsing can be added later
  */
 export function applyTemplateToSummary(summary: string, template: Template): { [sectionTitle: string]: string } {
     const result: { [sectionTitle: string]: string } = {};
 
+    // If summary is empty, use placeholders
     if (!summary || !summary.trim()) {
         template.sections.forEach((section: TemplateSection) => {
             result[section.title] = section.placeholder;
@@ -34,6 +37,8 @@ export function applyTemplateToSummary(summary: string, template: Template): { [
         return result;
     }
 
+    // Simple approach: put all content in the first section for now
+    // This can be enhanced with keyword matching later
     template.sections.forEach((section: TemplateSection, index: number) => {
         if (index === 0) {
             result[section.title] = summary;

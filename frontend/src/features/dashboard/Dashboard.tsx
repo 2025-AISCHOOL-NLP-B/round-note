@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { MeetingStart } from "@/features/realtime/MeetingStart";
 import { MeetingListView } from "@/features/meetings/MeetingListView";
+import { MeetingChatbotPage } from "@/features/meetings/MeetingChatbotPage";
 import { ActionItemsPage } from "@/features/action-items/ActionItemsPage";
 import { TemplateSettings } from "@/features/settings/TemplateSettings";
 // import { NotificationSettings } from "@/features/settings/NotificationSettings";
@@ -23,6 +24,7 @@ import {
   Tag,
   ChevronRight,
   ChevronLeft,
+  MessageSquare,
 } from "lucide-react";
 import { Toaster } from "../../shared/ui/sonner";
 import Image from "next/image";
@@ -57,40 +59,36 @@ export interface Meeting {
   keyDecisions?: string[];
   nextSteps?: string[];
   audioUrl?: string;
+  purpose?: string;
 }
 
-const STORAGE_KEY = "meetings-app-data";
-
-export default function Dashboard() {
+export function Dashboard() {
   const [meetings, setMeetings] = useState<Meeting[]>([]);
-  const [activeSection, setActiveSection] = useState("home");
+  const [activeSection, setActiveSection] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem("dashboard_active_section") || "home";
+    }
+    return "home";
+  });
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
-
-  // 앱 시작 시 localStorage의 meetings-app-data를 강제로 삭제
+  // Save activeSection to localStorage whenever it changes
   useEffect(() => {
-    localStorage.removeItem(STORAGE_KEY);
-  }, []);
+    localStorage.setItem("dashboard_active_section", activeSection);
+  }, [activeSection]);
 
-  // 백엔드에서 회의 목록 불러오기
   useEffect(() => {
     const fetchMeetings = async () => {
       try {
-        const token = localStorage.getItem('access_token');
-        if (!token) return;
-
         const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/meetings/`, {
           method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
+          credentials: 'include', // httpOnly Cookie 전송
         });
 
         if (response.ok) {
           const data = await response.json();
           console.log('[Dashboard] Fetched meetings from backend:', data);
-          
-          // 백엔드 응답을 프론트엔드 Meeting 타입으로 변환
+
           const mappedMeetings: Meeting[] = data.map((m: any) => ({
             id: m.meeting_id,
             title: m.title || '제목 없음',
@@ -117,8 +115,7 @@ export default function Dashboard() {
             nextSteps: m.next_steps || [],
             audioUrl: m.audio_url || ''
           }));
-          
-          console.log('[Dashboard] Mapped meetings:', mappedMeetings);
+
           setMeetings(mappedMeetings);
         }
       } catch (error) {
@@ -131,10 +128,10 @@ export default function Dashboard() {
 
   // Initialize notification checker
   useEffect(() => {
-  if (meetings.length > 0) {
-    const cleanup = initNotificationChecker(meetings);
-    return cleanup;
-  }
+    if (meetings.length > 0) {
+      const cleanup = initNotificationChecker(meetings);
+      return cleanup;
+    }
   }, [meetings]);
 
   const handleAddMeeting = (meeting: Meeting) => {
@@ -162,32 +159,20 @@ export default function Dashboard() {
 
   const handleLogout = async () => {
     try {
-      const token = localStorage.getItem('access_token');
-      
-      if (token) {
-        // 백엔드 로그아웃 API 호출 (선택적)
-        await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/logout`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        }).catch(err => console.log('Logout API error:', err)); // 실패해도 계속 진행
-      }
-      
-      // JWT 토큰 제거
-      localStorage.removeItem('access_token');
-      
+      // 백엔드 로그아웃 API 호출 (httpOnly Cookie 삭제)
+      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/logout`, {
+        method: 'POST',
+        credentials: 'include', // httpOnly Cookie 전송
+      }).catch(err => console.log('Logout API error:', err)); // 실패해도 계속 진행
+
       // 로그인 페이지로 이동
       window.location.href = "/login";
     } catch (error) {
       console.error('로그아웃 중 오류:', error);
-      // 오류가 발생해도 토큰은 제거하고 로그인 페이지로 이동
-      localStorage.removeItem('access_token');
+      // 오류가 발생해도 로그인 페이지로 이동
       window.location.href = "/login";
     }
   };
-
-  // Show login screen if not logged in
 
   const renderContent = () => {
     switch (activeSection) {
@@ -286,6 +271,9 @@ export default function Dashboard() {
           />
         );
 
+      case "chatbot":
+        return <MeetingChatbotPage meetings={meetings} />;
+
       case "template":
         return <TemplateSettings onBack={() => setActiveSection("settings")} />;
 
@@ -376,7 +364,7 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              
+
 
               <div
                 className="group p-5 border-2 border-border rounded-xl hover:border-primary/40 hover:bg-primary/5 transition-all cursor-pointer"
@@ -398,7 +386,7 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              
+
             </div>
           </div>
         );
@@ -420,13 +408,12 @@ export default function Dashboard() {
     <button
       onClick={() => setActiveSection(section)}
       className={`
-        flex items-center gap-3 px-4 py-3 rounded-xl transition-all w-full
-        ${
-          activeSection === section
-            ? "bg-primary text-white shadow-md"
-            : "text-muted-foreground hover:bg-primary/10 hover:text-primary"
+          flex items-center gap-3 px-4 py-3 rounded-xl transition-all w-full
+          ${activeSection === section
+          ? "bg-primary text-white shadow-md"
+          : "text-muted-foreground hover:bg-primary/10 hover:text-primary"
         }
-      `}
+        `}
     >
       <Icon className="w-5 h-5 flex-shrink-0" />
       {sidebarOpen && <span className="truncate">{label}</span>}
@@ -438,31 +425,31 @@ export default function Dashboard() {
       {/* Sidebar */}
       <aside
         className={`
-          bg-white border-r border-border sticky top-0 h-screen transition-all duration-300 flex-shrink-0 hidden md:flex flex-col
-          ${sidebarOpen ? "w-64" : "w-20"}
-        `}
+            bg-white border-r border-border sticky top-0 h-screen transition-all duration-300 flex-shrink-0 hidden md:flex flex-col
+            ${sidebarOpen ? "w-64" : "w-20"}
+          `}
       >
         {/* Sidebar Header */}
         <div className="p-4 border-b border-border flex items-center justify-between">
           {sidebarOpen ? (
             <Image
-            src={logoImage}
-            alt="RoundNote Logo"
-            width={40}
-            height={40}
-            className="h-10 w-auto cursor-pointer"
-            onClick={() => setActiveSection("home")}
+              src={logoImage}
+              alt="RoundNote Logo"
+              width={40}
+              height={40}
+              className="h-10 w-auto cursor-pointer"
+              onClick={() => setActiveSection("home")}
             />
           ) : (
             <div className="flex justify-center w-full">
-                <Image
-                    src={logoSmall}
-                    alt="RoundNote Logo"
-                    width={32}
-                    height={32}
-                    className="h-8 w-auto cursor-pointer"
-                    onClick={() => setActiveSection("home")}
-                />
+              <Image
+                src={logoSmall}
+                alt="RoundNote Logo"
+                width={32}
+                height={32}
+                className="h-8 w-auto cursor-pointer"
+                onClick={() => setActiveSection("home")}
+              />
             </div>
           )}
           {sidebarOpen && (
@@ -499,6 +486,7 @@ export default function Dashboard() {
             icon={ClipboardList}
             label="회의 내역"
           />
+          <SidebarNavItem section="chatbot" icon={MessageSquare} label="회의 챗봇" />
           <SidebarNavItem section="settings" icon={Settings} label="환경설정" />
         </nav>
 
@@ -508,9 +496,9 @@ export default function Dashboard() {
             onClick={handleLogout}
             variant="ghost"
             className={`
-              w-full gap-3 text-red-600 hover:bg-red-50 hover:text-red-700
-              ${sidebarOpen ? "justify-start" : "justify-center px-0"}
-            `}
+                w-full gap-3 text-red-600 hover:bg-red-50 hover:text-red-700
+                ${sidebarOpen ? "justify-start" : "justify-center px-0"}
+              `}
           >
             <LogOut className="w-5 h-5 flex-shrink-0" />
             {sidebarOpen && <span>로그아웃</span>}
@@ -524,12 +512,12 @@ export default function Dashboard() {
         <header className="bg-white border-b border-border p-4 md:hidden sticky top-0 z-50">
           <div className="flex items-center justify-between">
             <Image
-            src={logoImage}
-            alt="RoundNote Logo"
-            width={40}
-            height={40}
-            className="h-10 w-auto cursor-pointer"
-            onClick={() => setActiveSection("home")}
+              src={logoImage}
+              alt="RoundNote Logo"
+              width={40}
+              height={40}
+              className="h-10 w-auto cursor-pointer"
+              onClick={() => setActiveSection("home")}
             />
             <Button onClick={handleLogout} variant="ghost" size="sm">
               <LogOut className="w-4 h-4" />
@@ -574,7 +562,9 @@ export default function Dashboard() {
       </div>
 
       {/* Toast Notifications */}
+
       <Toaster position="top-center" richColors />
     </div>
   );
 }
+export default Dashboard;
