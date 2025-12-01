@@ -31,13 +31,14 @@ async def websocket_endpoint(
     stt_service: STTService = Depends(get_stt_service),
     llm_service: LLMService = Depends(get_llm_service),
     translate: bool = True, 
-    summary: bool = False
+    summary: bool = False,
+    channels: int = 1 # 클라이언트로부터 채널 수 요청 받음 (기본 1)
 ):
     """
     메인 WebSocket 핸들러, 클라이언트와 Deepgram 간의 중계 역할을 합니다.
     """
     await websocket.accept()
-    logging.info("React <-> FastAPI WebSocket 연결 수립됨.")
+    logging.info(f"React <-> FastAPI WebSocket 연결 수립됨. (요청 채널: {channels})")
     
     settings = TranscribeSettings(translate=translate, summary=summary)
     
@@ -53,11 +54,19 @@ async def websocket_endpoint(
     }
     
     try:
-        dg_url, dg_headers = stt_service.get_realtime_stt_url()
+        # 요청된 채널 수에 맞춰 Deepgram URL 생성
+        dg_url, dg_headers = stt_service.get_realtime_stt_url(channels=channels)
         wave_file, file_path = storage_service.create_local_wave_file()
         
         # 2. Deepgram WebSocket에 연결
-        async with websockets.connect(dg_url, additional_headers=dg_headers) as dg_websocket:
+        # [Fix] 연결 타임아웃을 30초로 연장하고 핑 설정을 최적화하여 핸드셰이크 실패 방지
+        async with websockets.connect(
+            dg_url, 
+            additional_headers=dg_headers,
+            open_timeout=30,
+            ping_interval=20, 
+            ping_timeout=20
+        ) as dg_websocket:
             logging.info(f"Deepgram 연결 성공. 양방향 중계 시작.")
 
             # 3. 비동기 태스크 생성: React <-> Deepgram 양방향 중계
@@ -231,7 +240,16 @@ async def forward_to_client(
                 # 2. 최종 텍스트 처리: 화자 정보와 함께 최종 문장 구성
                 words = result.get("channel", {}).get("alternatives", [{}])[0].get("words", [])
                 speaker_id = words[0].get("speaker") if words else None
-                speaker_tag = f"[Speaker {speaker_id}] " if speaker_id is not None else ""
+                
+                # 채널 정보 확인 (0: Mic, 1: System)
+                channel_index = result.get("channel_index", [0, 1])[0]
+                
+                if speaker_id is not None:
+                    prefix = "System" if channel_index == 1 else "Mic"
+                    speaker_tag = f"[{prefix} Speaker {speaker_id}] "
+                else:
+                    speaker_tag = ""
+
                 final_text = speaker_tag + transcript
                 
                 # 3. (React 전송) 최종 전사 텍스트를 React로 전송
