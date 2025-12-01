@@ -29,7 +29,9 @@ import {
   PauseCircle,
   PlayCircle,
   StopCircle,
-  User
+  User,
+  Monitor,
+  MonitorOff
 } from 'lucide-react';
 // Supabase support is optional and disabled by default.
 const ENABLE_SUPABASE = String(process.env.NEXT_PUBLIC_ENABLE_SUPABASE || 'false').toLowerCase() === 'true';
@@ -72,7 +74,7 @@ interface MeetingContentInputProps {
     purpose?: string;
     participants?: string
   };
-  onComplete: (content: string, aiAnalysis?: any) => void;
+  onComplete: (content: string, aiAnalysis?: any, meetingId?: string | null) => void;
   onBack: () => void;
   meetings: Meeting[];
 }
@@ -92,6 +94,9 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
     pauseRecording,
     resumeRecording,
     vadLoading,
+    startSystemAudio,
+    stopSystemAudio,
+    isSystemAudioShared,
   } = useRealtimeStream();
 
   const [content, setContent] = useState('');
@@ -332,16 +337,17 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
     } else {
       try {
         // 1) 회의 미리 생성 (is_realtime 플래그)
+        let created;
         try {
-          const created = await createMeeting({ title: editableTitle || generateDefaultTitle(meetings), purpose: meetingInfo.purpose, is_realtime: true });
+          created = await createMeeting({ title: editableTitle || generateDefaultTitle(meetings), purpose: meetingInfo.purpose, is_realtime: true });
           setCurrentMeetingId(created.meeting_id);
         } catch (e) {
           console.error('Failed to create meeting before recording:', e);
           toast.error('회의 생성에 실패했습니다. 네트워크 상태를 확인해주세요.');
           return;
         }
-        // 2) 녹음 시작
-        await startRecording();
+        // 2) 녹음 시작 (생성된 회의 ID 전달)
+        await startRecording(created.meeting_id);
         startAudioRecording();
         setRecordingTime(0);
         toast.success('녹음이 시작되었습니다.');
@@ -481,7 +487,7 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
 
     // 최종 UI 정리
     setTimeout(() => {
-      onComplete(content, analysisWithAudio);
+      onComplete(content, analysisWithAudio, currentMeetingId);
       setContent('');
       // Reset audio chunks for next recording
       audioChunksRef.current = [];
@@ -691,6 +697,26 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
                     )}
                   </Button>
                 )}
+
+                <Button
+                  onClick={isSystemAudioShared ? stopSystemAudio : startSystemAudio}
+                  size="lg"
+                  variant={isSystemAudioShared ? "secondary" : "outline"}
+                  className="gap-2"
+                  title="시스템 오디오(화상회의 소리) 공유"
+                >
+                  {isSystemAudioShared ? (
+                    <>
+                      <MonitorOff className="w-5 h-5" />
+                      <span className="hidden sm:inline">시스템 소리 끄기</span>
+                    </>
+                  ) : (
+                    <>
+                      <Monitor className="w-5 h-5" />
+                      <span className="hidden sm:inline">시스템 소리 공유</span>
+                    </>
+                  )}
+                </Button>
               </div>
 
               {/* 전사 내용 표시 영역 - 타임라인 스타일 */}
@@ -820,6 +846,26 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
                     )}
                   </Button>
                 )}
+
+                <Button
+                  onClick={isSystemAudioShared ? stopSystemAudio : startSystemAudio}
+                  size="lg"
+                  variant={isSystemAudioShared ? "secondary" : "outline"}
+                  className="gap-2"
+                  title="시스템 오디오(화상회의 소리) 공유"
+                >
+                  {isSystemAudioShared ? (
+                    <>
+                      <MonitorOff className="w-5 h-5" />
+                      <span className="hidden sm:inline">시스템 소리 끄기</span>
+                    </>
+                  ) : (
+                    <>
+                      <Monitor className="w-5 h-5" />
+                      <span className="hidden sm:inline">시스템 소리 공유</span>
+                    </>
+                  )}
+                </Button>
               </div>
 
               {/* 요약 내용 표시 영역 - 고정 높이 + 스크롤 */}
