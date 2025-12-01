@@ -8,7 +8,6 @@ import {
   type ActionItemResponse,
   type FullReportResponse,
 } from '@/features/meetings/reportsService';
-import { getActiveTemplate } from '@/features/settings/templateUtils';
 
 interface UseMeetingReportResult {
   // 상태
@@ -96,28 +95,13 @@ export function useMeetingReport(): UseMeetingReportResult {
     }
   }, []);
 
-  // 요약 및 액션 아이템 재생성 (템플릿 적용)
+  // 요약 및 액션 아이템 재생성
   const regenerate = useCallback(async (meetingId: string): Promise<boolean> => {
     setIsRegenerating(true);
     setError(null);
     
     try {
-      // 현재 선택된 템플릿 가져오기
-      const activeTemplate = getActiveTemplate();
-      
-      // 템플릿이 있으면 전달, 없으면 기본 요약
-      const templateData = activeTemplate ? {
-        id: activeTemplate.id,
-        name: activeTemplate.name,
-        description: activeTemplate.description || '',
-        sections: activeTemplate.sections.map(s => ({
-          id: s.id,
-          title: s.title,
-          placeholder: s.placeholder
-        }))
-      } : undefined;
-      
-      const result = await regenerateSummary(meetingId, templateData);
+      const result = await regenerateSummary(meetingId);
       
       // 재생성 후 새 데이터 조회
       await fetchFullReport(meetingId);

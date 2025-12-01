@@ -5,24 +5,19 @@
  */
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-import { handleAuthResponse } from '@/utils/auth';
 
-// 공통 헤더 생성 (httpOnly Cookie 사용)
-const getHeaders = (): HeadersInit => {
-  return {
-    'Content-Type': 'application/json'
-  };
+// 토큰을 로컬스토리지에서 가져오는 헬퍼 함수
+const getAuthToken = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('access_token');
 };
 
-// 공통 fetch 옵션 (credentials 포함)
-const getFetchOptions = (options: RequestInit = {}): RequestInit => {
+// 공통 헤더 생성
+const getHeaders = (): HeadersInit => {
+  const token = getAuthToken();
   return {
-    ...options,
-    credentials: 'include',
-    headers: {
-      ...getHeaders(),
-      ...(options.headers || {})
-    }
+    'Content-Type': 'application/json',
+    ...(token && { 'Authorization': `Bearer ${token}` })
   };
 };
 
@@ -64,20 +59,6 @@ export interface RegenerateResponse {
   action_items_count: number;
 }
 
-// 템플릿 관련 타입
-export interface TemplateSection {
-  id: string;
-  title: string;
-  placeholder: string;
-}
-
-export interface Template {
-  id: string;
-  name: string;
-  description?: string;
-  sections: TemplateSection[];
-}
-
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
@@ -94,11 +75,15 @@ export interface ChatResponse {
  * 회의 요약 조회
  */
 export const getMeetingSummary = async (meetingId: string): Promise<SummaryResponse> => {
-  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/summary`, 
-    getFetchOptions({ method: 'GET' })
-  );
+  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/summary`, {
+    method: 'GET',
+    headers: getHeaders(),
+  });
 
-  await handleAuthResponse(response);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to fetch summary' }));
+    throw new Error(error.detail || 'Failed to fetch summary');
+  }
 
   return response.json();
 };
@@ -107,11 +92,15 @@ export const getMeetingSummary = async (meetingId: string): Promise<SummaryRespo
  * 액션 아이템 목록 조회
  */
 export const getMeetingActionItems = async (meetingId: string): Promise<ActionItemResponse[]> => {
-  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/action-items`, 
-    getFetchOptions({ method: 'GET' })
-  );
+  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/action-items`, {
+    method: 'GET',
+    headers: getHeaders(),
+  });
 
-  await handleAuthResponse(response);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to fetch action items' }));
+    throw new Error(error.detail || 'Failed to fetch action items');
+  }
 
   return response.json();
 };
@@ -120,26 +109,32 @@ export const getMeetingActionItems = async (meetingId: string): Promise<ActionIt
  * 전체 보고서 조회 (요약 + 액션 아이템 + 전사 내용)
  */
 export const getFullReport = async (meetingId: string): Promise<FullReportResponse> => {
-  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/full`, 
-    getFetchOptions({ method: 'GET' })
-  );
+  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/full`, {
+    method: 'GET',
+    headers: getHeaders(),
+  });
 
-  await handleAuthResponse(response);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to fetch full report' }));
+    throw new Error(error.detail || 'Failed to fetch full report');
+  }
 
   return response.json();
 };
 
 /**
  * 요약 및 액션 아이템 재생성 (LLM 호출)
- * @param meetingId - 회의 ID
- * @param template - 선택된 템플릿 (선택사항)
  */
 export const regenerateSummary = async (meetingId: string): Promise<RegenerateResponse> => {
-  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/regenerate`, 
-    getFetchOptions({ method: 'POST' })
-  );
+  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/regenerate`, {
+    method: 'POST',
+    headers: getHeaders(),
+  });
 
-  await handleAuthResponse(response);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to regenerate summary' }));
+    throw new Error(error.detail || 'Failed to regenerate summary');
+  }
 
   return response.json();
 };
@@ -153,10 +148,16 @@ export const searchMeetingContent = async (
 ): Promise<{ results: string[] }> => {
   const response = await fetch(
     `${API_URL}/api/v1/reports/${meetingId}/search?query=${encodeURIComponent(query)}`, 
-    getFetchOptions({ method: 'GET' })
+    {
+      method: 'GET',
+      headers: getHeaders(),
+    }
   );
 
-  await handleAuthResponse(response);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Search failed' }));
+    throw new Error(error.detail || 'Search failed');
+  }
 
   return response.json();
 };
@@ -169,17 +170,19 @@ export const chatWithMeeting = async (
   message: string,
   history: ChatMessage[] = []
 ): Promise<ChatResponse> => {
-  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/chat`, 
-    getFetchOptions({
-      method: 'POST',
-      body: JSON.stringify({
-        message,
-        history,
-      }),
-    })
-  );
+  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/chat`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({
+      message,
+      history,
+    }),
+  });
 
-  await handleAuthResponse(response);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Chat failed' }));
+    throw new Error(error.detail || 'Chat failed');
+  }
 
   return response.json();
 };
@@ -193,14 +196,16 @@ export const saveJiraSettings = async (settings: {
   api_token: string;
   default_project_key?: string;
 }): Promise<{ message: string; projects_found: number }> => {
-  const response = await fetch(`${API_URL}/api/v1/settings/jira`, 
-    getFetchOptions({
-      method: 'POST',
-      body: JSON.stringify(settings),
-    })
-  );
+  const response = await fetch(`${API_URL}/api/v1/settings/jira`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify(settings),
+  });
 
-  await handleAuthResponse(response);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to save Jira settings' }));
+    throw new Error(error.detail || 'Failed to save Jira settings');
+  }
 
   return response.json();
 };
@@ -214,11 +219,15 @@ export const getJiraSettings = async (): Promise<{
   default_project_key?: string;
   is_active: boolean;
 }> => {
-  const response = await fetch(`${API_URL}/api/v1/settings/jira`, 
-    getFetchOptions({ method: 'GET' })
-  );
+  const response = await fetch(`${API_URL}/api/v1/settings/jira`, {
+    method: 'GET',
+    headers: getHeaders(),
+  });
 
-  await handleAuthResponse(response);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Jira settings not found' }));
+    throw new Error(error.detail || 'Jira settings not found');
+  }
 
   return response.json();
 };
@@ -227,129 +236,15 @@ export const getJiraSettings = async (): Promise<{
  * Jira 설정 삭제
  */
 export const deleteJiraSettings = async (): Promise<{ message: string }> => {
-  const response = await fetch(`${API_URL}/api/v1/settings/jira`, 
-    getFetchOptions({ method: 'DELETE' })
-  );
+  const response = await fetch(`${API_URL}/api/v1/settings/jira`, {
+    method: 'DELETE',
+    headers: getHeaders(),
+  });
 
-  await handleAuthResponse(response);
-
-  return response.json();
-};
-
-/**
- * Notion 설정 저장 (API 토큰만)
- */
-export const saveNotionSettings = async (settings: {
-  api_token: string;
-}): Promise<{ message: string }> => {
-  const response = await fetch(`${API_URL}/api/v1/settings/notion`, 
-    getFetchOptions({
-      method: 'POST',
-      body: JSON.stringify(settings),
-    })
-  );
-
-  await handleAuthResponse(response);
-
-  return response.json();
-};
-
-/**
- * Notion 설정 조회 (연동 상태만)
- */
-export const getNotionSettings = async (): Promise<{
-  is_active: boolean;
-  created_dt?: string;
-  updated_dt?: string;
-}> => {
-  const response = await fetch(`${API_URL}/api/v1/settings/notion`, 
-    getFetchOptions({ method: 'GET' })
-  );
-
-  await handleAuthResponse(response);
-
-  return response.json();
-};
-
-/**
- * Notion 설정 삭제
- */
-export const deleteNotionSettings = async (): Promise<{ message: string }> => {
-  const response = await fetch(`${API_URL}/api/v1/settings/notion`, 
-    getFetchOptions({ method: 'DELETE' })
-  );
-
-  await handleAuthResponse(response);
-
-  return response.json();
-};
-
-/**
- * Notion 페이지 목록 조회 (연동 전 - API 토큰 검증용)
- */
-export const searchNotionPages = async (apiToken: string): Promise<{
-  pages: Array<{ id: string; title: string; url: string }>;
-  count: number;
-}> => {
-  const response = await fetch(`${API_URL}/api/v1/settings/notion/pages`, 
-    getFetchOptions({
-      method: 'POST',
-      body: JSON.stringify({ api_token: apiToken }),
-    })
-  );
-
-  await handleAuthResponse(response);
-
-  return response.json();
-};
-
-/**
- * Notion 데이터베이스 목록 조회 (연동 전 - API 토큰 검증용)
- */
-export const searchNotionDatabases = async (apiToken: string): Promise<{
-  databases: Array<{ id: string; title: string; url: string }>;
-  count: number;
-}> => {
-  const response = await fetch(`${API_URL}/api/v1/settings/notion/databases`, 
-    getFetchOptions({
-      method: 'POST',
-      body: JSON.stringify({ api_token: apiToken }),
-    })
-  );
-
-  await handleAuthResponse(response);
-
-  return response.json();
-};
-
-/**
- * 내 Notion 페이지 목록 조회 (연동 후 - 저장된 토큰 사용)
- */
-export const getMyNotionPages = async (): Promise<{
-  pages: Array<{ id: string; title: string; url: string }>;
-  count: number;
-}> => {
-  const response = await fetch(`${API_URL}/api/v1/settings/notion/my-pages`, 
-    getFetchOptions({ method: 'GET' })
-  );
-
-  await handleAuthResponse(response);
-
-  return response.json();
-};
-
-/**
- * 내 Notion 데이터베이스 목록 조회 (연동 후 - 저장된 토큰 사용)
- */
-export const getMyNotionDatabases = async (): Promise<{
-  databases: Array<{ id: string; title: string; url: string }>;
-  count: number;
-}> => {
-  const response = await fetch(`${API_URL}/api/v1/settings/notion/my-databases`, 
-    getFetchOptions({ method: 'GET' })
-  );
-
-  await handleAuthResponse(response);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to delete Jira settings' }));
+    throw new Error(error.detail || 'Failed to delete Jira settings');
+  }
 
   return response.json();
 };
@@ -365,11 +260,15 @@ export const getJiraProjectUsers = async (projectKey: string): Promise<{
     avatar_url?: string;
   }>;
 }> => {
-  const response = await fetch(`${API_URL}/api/v1/settings/jira/projects/${projectKey}/users`, 
-    getFetchOptions({ method: 'GET' })
-  );
+  const response = await fetch(`${API_URL}/api/v1/settings/jira/projects/${projectKey}/users`, {
+    method: 'GET',
+    headers: getHeaders(),
+  });
 
-  await handleAuthResponse(response);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to fetch Jira users' }));
+    throw new Error(error.detail || 'Failed to fetch Jira users');
+  }
 
   return response.json();
 };
@@ -385,11 +284,15 @@ export const getJiraPriorities = async (projectKey: string): Promise<{
     description: string;
   }>;
 }> => {
-  const response = await fetch(`${API_URL}/api/v1/settings/jira/projects/${projectKey}/priorities`, 
-    getFetchOptions({ method: 'GET' })
-  );
+  const response = await fetch(`${API_URL}/api/v1/settings/jira/projects/${projectKey}/priorities`, {
+    method: 'GET',
+    headers: getHeaders(),
+  });
 
-  await handleAuthResponse(response);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to fetch Jira priorities' }));
+    throw new Error(error.detail || 'Failed to fetch Jira priorities');
+  }
 
   return response.json();
 };
@@ -401,11 +304,15 @@ export const getJiraProjects = async (): Promise<{
   projects: Array<{ key: string; name: string; id: string }>;
   default_project_key?: string;
 }> => {
-  const response = await fetch(`${API_URL}/api/v1/settings/jira/projects`, 
-    getFetchOptions({ method: 'GET' })
-  );
+  const response = await fetch(`${API_URL}/api/v1/settings/jira/projects`, {
+    method: 'GET',
+    headers: getHeaders(),
+  });
 
-  await handleAuthResponse(response);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to fetch Jira projects' }));
+    throw new Error(error.detail || 'Failed to fetch Jira projects');
+  }
 
   return response.json();
 };
@@ -415,8 +322,7 @@ export const getJiraProjects = async (): Promise<{
  */
 export const pushToJira = async (
   meetingId: string,
-  projectKey: string,
-  itemIds?: string[]
+  projectKey: string
 ): Promise<{
   message: string;
   project_key: string;
@@ -431,17 +337,16 @@ export const pushToJira = async (
     failed_count: number;
   };
 }> => {
-  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/action-items/to-jira`, 
-    getFetchOptions({
-      method: 'POST',
-      body: JSON.stringify({ 
-        project_key: projectKey,
-        item_ids: itemIds
-      }),
-    })
-  );
+  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/action-items/to-jira`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ project_key: projectKey }),
+  });
 
-  await handleAuthResponse(response);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to push to Jira' }));
+    throw new Error(error.detail || 'Failed to push to Jira');
+  }
 
   return response.json();
 };
@@ -461,14 +366,16 @@ export const createActionItem = async (
     jira_assignee_id?: string;
   }
 ): Promise<any> => {
-  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/action-items`, 
-    getFetchOptions({
-      method: 'POST',
-      body: JSON.stringify(item),
-    })
-  );
+  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/action-items`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify(item),
+  });
 
-  await handleAuthResponse(response);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to create action item' }));
+    throw new Error(error.detail || 'Failed to create action item');
+  }
 
   return response.json();
 };
@@ -494,16 +401,20 @@ export const updateActionItem = async (
   console.log('[updateActionItem] Request:', { url, meetingId, itemId, updates });
   
   try {
-    const response = await fetch(url, 
-      getFetchOptions({
-        method: 'PATCH',
-        body: JSON.stringify(updates),
-      })
-    );
+    const response = await fetch(url, {
+      method: 'PATCH',
+      headers: getHeaders(),
+      body: JSON.stringify(updates),
+    });
 
     console.log('[updateActionItem] Response status:', response.status, response.statusText);
 
-    await handleAuthResponse(response);
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Failed to update action item' }));
+      const errorMessage = typeof error.detail === 'string' ? error.detail : JSON.stringify(error);
+      console.error('[updateActionItem] Error response:', error);
+      throw new Error(errorMessage);
+    }
 
     const result = await response.json();
     console.log('[updateActionItem] Success:', result);
@@ -524,11 +435,15 @@ export const deleteActionItem = async (
   meetingId: string,
   itemId: string
 ): Promise<{ message: string; item_id: string }> => {
-  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/action-items/${itemId}`, 
-    getFetchOptions({ method: 'DELETE' })
-  );
+  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/action-items/${itemId}`, {
+    method: 'DELETE',
+    headers: getHeaders(),
+  });
 
-  await handleAuthResponse(response);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to delete action item' }));
+    throw new Error(error.detail || 'Failed to delete action item');
+  }
 
   return response.json();
 };
@@ -537,11 +452,15 @@ export const deleteActionItem = async (
  * Notion으로 보고서 내보내기
  */
 export const pushToNotion = async (meetingId: string): Promise<any> => {
-  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/report/to-notion`, 
-    getFetchOptions({ method: 'POST' })
-  );
+  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/report/to-notion`, {
+    method: 'POST',
+    headers: getHeaders(),
+  });
 
-  await handleAuthResponse(response);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to push to Notion' }));
+    throw new Error(error.detail || 'Failed to push to Notion');
+  }
 
   return response.json();
 };
@@ -551,10 +470,7 @@ export const pushToNotion = async (meetingId: string): Promise<any> => {
  * - 참석자, 요약, 액션 아이템 필수 포함
  * - 날짜 형식: 2024년 11월 25일 (월) 14:00 - 15:30
  */
-export const exportToNotionComprehensive = async (
-  meetingId: string,
-  parentPageId?: string
-): Promise<{
+export const exportToNotionComprehensive = async (meetingId: string): Promise<{
   success: boolean;
   notion_page_id: string;
   notion_url: string;
@@ -568,11 +484,12 @@ export const exportToNotionComprehensive = async (
   const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/notion/comprehensive`, {
     method: 'POST',
     headers: getHeaders(),
-    credentials: 'include',
-    body: JSON.stringify({ parent_page_id: parentPageId }),
   });
 
-  await handleAuthResponse(response);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to export to Notion' }));
+    throw new Error(error.detail || 'Failed to export to Notion');
+  }
 
   return response.json();
 };
@@ -580,10 +497,7 @@ export const exportToNotionComprehensive = async (
 /**
  * Notion에 액션 아이템만 내보내기
  */
-export const exportActionItemsToNotion = async (
-  meetingId: string,
-  databaseId?: string
-): Promise<{
+export const exportActionItemsToNotion = async (meetingId: string): Promise<{
   success: boolean;
   created_count: number;
   items: Array<{ id: string; url: string }>;
@@ -592,76 +506,12 @@ export const exportActionItemsToNotion = async (
   const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/notion/action-items`, {
     method: 'POST',
     headers: getHeaders(),
-    credentials: 'include',
-    body: JSON.stringify({ database_id: databaseId }),
   });
 
-  await handleAuthResponse(response);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to export action items to Notion' }));
+    throw new Error(error.detail || 'Failed to export action items to Notion');
+  }
 
   return response.json();
 };
-
-// ==================== Aliases & Helpers for NotionExportButtonV3 ====================
-
-/**
- * 포괄적 회의록 미리보기 (NotionExportButtonV3용)
- * 실제로는 full report를 가져와서 통계를 계산
- */
-export const previewComprehensiveReport = async (meetingId: string): Promise<{
-  participants_count: number;
-  absent_count: number;
-  discussions_count: number;
-  action_items_count: number;
-}> => {
-  try {
-    // Fetch full report to get summary and action items
-    const report = await getFullReport(meetingId);
-    
-    // Estimate counts
-    const actionItemsCount = report.action_items ? report.action_items.length : 0;
-    
-    // Estimate discussions from summary content (e.g. bullet points)
-    const summaryContent = report.summary?.content || '';
-    // Count bullet points or lines as a proxy for discussions
-    const discussionsCount = (summaryContent.match(/^- /gm) || []).length || 
-                             (summaryContent.split('\n').filter(line => line.trim().length > 0).length);
-    
-    return {
-      participants_count: 1, // Default to 1 (host) as we don't track participants fully yet
-      absent_count: 0,
-      discussions_count: discussionsCount,
-      action_items_count: actionItemsCount
-    };
-  } catch (error) {
-    console.error('Failed to preview report:', error);
-    return {
-      participants_count: 0,
-      absent_count: 0,
-      discussions_count: 0,
-      action_items_count: 0
-    };
-  }
-};
-
-export const pushComprehensiveReportToNotion = async (meetingId: string, parentPageId?: string) => {
-  const result = await exportToNotionComprehensive(meetingId, parentPageId);
-  return {
-    ...result,
-    participants_count: result.included.participants,
-    absent_count: 0,
-    discussions_count: 0,
-    decisions_count: 0,
-    action_items_count: result.included.action_items,
-    pending_issues_count: 0
-  };
-};
-
-export const pushReportToNotion = pushToNotion;
-export const pushActionItemsToNotion = async (meetingId: string, databaseId?: string) => {
-  const result = await exportActionItemsToNotion(meetingId, databaseId);
-  return {
-    ...result,
-    notion_url: result.items.length > 0 ? result.items[0].url : ''
-  };
-};
-
