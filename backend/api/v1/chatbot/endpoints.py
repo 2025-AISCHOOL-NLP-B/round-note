@@ -1,8 +1,9 @@
 # backend/api/v1/chatbot/endpoints.py
 
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from backend.database import get_db
@@ -17,8 +18,13 @@ from backend.schemas.chatbot import (
     ChatbotHealthCheck,
     FullTextChatbotRequest,
     FullTextChatbotResponse,
+    AdversarialAnalysisResponse,
+    QuickQuestion,
+    QuickQuestionsResponse,
+    StreamingChatbotRequest,
 )
 from backend.core.chatbot.service import ChatbotService
+from backend.core.chatbot.adversarial_intelligence import AdversarialIntelligence
 
 # 🔧 실제 프로젝트의 인증 의존성 위치에 맞게 수정 필요
 # 예: from backend.core.auth.dependencies import get_current_user
@@ -145,9 +151,9 @@ def chatbot_health(
 @router.post(
     "/ask-fulltext",
     response_model=FullTextChatbotResponse,
-    summary="원문 기반 챗봇 질의 (N개 회의 선택)",
+    summary="RAG 기반 챗봇 질의 (N개 회의 선택)",
     description=(
-        "벡터 검색 없이 N개의 회의 전사 원문을 LLM에 직접 전달하여 질문에 답변합니다. "
+        "RAG(Retrieval-Augmented Generation) 방식으로 N개의 회의에서 관련 정보를 검색하여 답변합니다. "
         "meeting_ids 리스트로 1개 이상의 회의를 선택할 수 있습니다."
     ),
 )
@@ -157,14 +163,14 @@ def ask_chatbot_fulltext(
     current_user: models.User = Depends(get_current_user),
 ):
     """
-    원문 기반 챗봇 질의 API
+    RAG 기반 챗봇 질의 API
 
     - meeting_ids: 질문 대상 회의 ID 리스트 (1개 이상 필수)
     - question: 사용자 질문
 
     Returns:
         - answer: LLM이 생성한 답변
-        - used_meetings: 답변에 사용된 회의 정보 (ID, 제목, 원문 길이)
+        - used_meetings: 답변에 사용된 회의 정보 (ID, 제목, 검색된 청크 수)
     """
     import logging
     logger = logging.getLogger(__name__)
@@ -207,8 +213,12 @@ def ask_chatbot_fulltext(
 
     # 2) 서비스 호출
     try:
-        service = ChatbotService()
-        logger.info("ChatbotService 호출 시작")
+        # 평가 모드는 환경 변수로 제어 (ENABLE_CHATBOT_EVALUATION=true)
+        import os
+        enable_eval = os.getenv("ENABLE_CHATBOT_EVALUATION", "false").lower() == "true"
+
+        service = ChatbotService(enable_evaluation=enable_eval)
+        logger.info(f"ChatbotService 호출 시작 (평가 모드: {enable_eval})")
         result = service.answer_question_fulltext(
             db=db,
             payload=payload,
@@ -226,4 +236,243 @@ def ask_chatbot_fulltext(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"챗봇 처리 중 오류가 발생했습니다: {str(e)}",
+        )
+
+
+# ==================== 적대적 지능 (Adversarial Intelligence) 엔드포인트 ====================
+
+@router.post(
+    "/analyze-adversarial/{meeting_id}",
+    response_model=AdversarialAnalysisResponse,
+    summary="적대적 지능 분석",
+    description=(
+        "회의 내용을 비판적으로 분석하여 논리적 불일치, 누락된 논점, "
+        "과거 결정과의 모순, 잠재적 리스크, 비논리적 결론을 탐지합니다."
+    ),
+)
+def analyze_meeting_adversarial(
+    meeting_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    적대적 지능 분석 API
+
+    Args:
+        meeting_id: 분석할 회의 ID
+
+    Returns:
+        AdversarialAnalysisResponse: 분석 결과
+            - inconsistencies: 논리적 불일치
+            - missing_points: 누락된 논점
+            - contradictions: 과거 결정 모순
+            - risks: 잠재 리스크
+            - illogical_conclusions: 비논리적 결론
+            - overall_score: 전체 품질 점수 (0-100)
+            - recommendations: 개선 권장사항
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    logger.info(f"적대적 지능 분석 요청 - 사용자: {current_user.USER_ID}, 회의: {meeting_id}")
+
+    # 1) 회의 존재 여부 확인
+    meeting = meeting_crud.get_meeting(db, meeting_id=meeting_id)
+    if not meeting:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="해당 회의를 찾을 수 없습니다.",
+        )
+
+    # (선택) 권한 체크: 회의 생성자/참석자만 접근 허용 등
+    # if meeting.CREATOR_ID != current_user.USER_ID:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_403_FORBIDDEN,
+    #         detail="이 회의에 접근 권한이 없습니다."
+    #     )
+
+    # 2) 적대적 지능 분석 수행
+    try:
+        analyzer = AdversarialIntelligence(db=db)
+        result = analyzer.analyze_meeting(meeting_id)
+
+        logger.info(f"적대적 지능 분석 완료 - 회의: {meeting_id}, 점수: {result['overall_score']:.1f}")
+
+        return AdversarialAnalysisResponse(**result)
+
+    except ValueError as e:
+        logger.error(f"적대적 지능 분석 ValueError: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"적대적 지능 분석 중 오류: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"적대적 지능 분석 중 오류가 발생했습니다: {str(e)}",
+        )
+
+
+# ==================== 챗봇 질문 선택지 엔드포인트 ====================
+
+@router.get(
+    "/quick-questions",
+    response_model=QuickQuestionsResponse,
+    summary="챗봇 빠른 질문 선택지 조회",
+    description="챗봇 UI에 표시될 4가지 빠른 질문 선택지를 반환합니다.",
+)
+def get_quick_questions(
+    meeting_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    챗봇 빠른 질문 선택지 조회 API
+
+    회의 요약 및 액션 추출 서비스에 최적화된 4가지 주요 질문을 제공합니다:
+    1. 회의 요약
+    2. 내 액션 아이템
+    3. 주요 결정사항
+    4. 적대적 지능 분석 (누락된 전제, 비논리적 결론, 잠재 리스크 탐지)
+
+    Args:
+        meeting_id: 특정 회의 ID (선택사항)
+
+    Returns:
+        QuickQuestionsResponse: 4가지 질문 선택지
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    logger.info(f"빠른 질문 선택지 요청 - 사용자: {current_user.USER_ID}, 회의: {meeting_id or '전체'}")
+
+    # 기본 질문 선택지 정의
+    questions = [
+        QuickQuestion(
+            id="summary",
+            question="이번 회의 핵심 내용을 요약해주세요",
+            description="회의의 주요 내용, 논의사항, 결론을 간단히 정리해드립니다",
+            category="summary",
+            icon="📝"
+        ),
+        QuickQuestion(
+            id="action",
+            question="내가 해야 할 일이 무엇인가요?",
+            description="회의에서 나에게 할당된 액션 아이템과 마감일을 확인합니다",
+            category="action",
+            icon="✅"
+        ),
+        QuickQuestion(
+            id="decision",
+            question="주요 결정사항과 합의된 내용은 무엇인가요?",
+            description="회의에서 내려진 의사결정과 팀이 합의한 사항을 알려드립니다",
+            category="decision",
+            icon="🎯"
+        ),
+        QuickQuestion(
+            id="adversarial",
+            question="이 회의에서 놓친 부분이나 리스크가 있나요?",
+            description="적대적 지능으로 논리적 불일치, 누락된 논점, 과거 결정과의 모순, 잠재 리스크를 탐지합니다",
+            category="adversarial",
+            icon="🔍"
+        ),
+    ]
+
+    return QuickQuestionsResponse(
+        questions=questions,
+        meeting_id=meeting_id
+    )
+
+
+# ==================== 스트리밍 챗봇 엔드포인트 ====================
+
+@router.post(
+    "/ask-streaming",
+    summary="RAG 기반 챗봇 질의 (스트리밍 모드)",
+    description=(
+        "RAG 방식으로 N개의 회의에서 관련 정보를 검색하여 실시간으로 답변을 스트리밍합니다. "
+        "GPT처럼 답변이 생성되는 과정을 실시간으로 확인할 수 있습니다."
+    ),
+)
+def ask_chatbot_streaming(
+    payload: StreamingChatbotRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    RAG 기반 챗봇 질의 API (스트리밍 모드)
+
+    - meeting_ids: 질문 대상 회의 ID 리스트 (1개 이상 필수)
+    - question: 사용자 질문
+    - conversation_history: 이전 대화 히스토리 (무제한)
+
+    Returns:
+        Server-Sent Events (SSE) 형식의 스트리밍 응답
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    logger.info(f"스트리밍 챗봇 요청 - 사용자: {current_user.USER_ID}, 회의 수: {len(payload.meeting_ids)}")
+
+    # 1) 회의 존재 여부 사전 확인
+    meetings = (
+        db.query(models.Meeting)
+        .filter(models.Meeting.MEETING_ID.in_(payload.meeting_ids))
+        .all()
+    )
+
+    if not meetings:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="요청한 회의를 찾을 수 없습니다.",
+        )
+
+    # 요청한 ID와 실제 조회된 ID 비교
+    found_ids = {m.MEETING_ID for m in meetings}
+    requested_ids = set(payload.meeting_ids)
+    missing_ids = requested_ids - found_ids
+
+    if missing_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"다음 회의를 찾을 수 없습니다: {', '.join(missing_ids)}",
+        )
+
+    # 2) 서비스 호출 (스트리밍)
+    try:
+        import os
+        enable_eval = os.getenv("ENABLE_CHATBOT_EVALUATION", "false").lower() == "true"
+
+        service = ChatbotService(enable_evaluation=enable_eval)
+        logger.info("스트리밍 ChatbotService 호출 시작")
+
+        # FullTextChatbotRequest로 변환
+        from backend.schemas.chatbot import FullTextChatbotRequest
+        fulltext_payload = FullTextChatbotRequest(
+            meeting_ids=payload.meeting_ids,
+            question=payload.question,
+            conversation_history=payload.conversation_history
+        )
+
+        return StreamingResponse(
+            service.answer_question_streaming(db=db, payload=fulltext_payload),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",  # Nginx 버퍼링 비활성화
+            }
+        )
+    except ValueError as e:
+        logger.error(f"스트리밍 챗봇 ValueError: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"스트리밍 챗봇 처리 중 오류: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"스트리밍 챗봇 처리 중 오류가 발생했습니다: {str(e)}",
         )
