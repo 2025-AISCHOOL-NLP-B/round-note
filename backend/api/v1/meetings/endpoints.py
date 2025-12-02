@@ -211,13 +211,8 @@ def update_meeting(
     
     본인이 생성한 회의만 수정할 수 있습니다.
     """
-    from sqlalchemy.orm import joinedload
-    
-    # 회의 조회 (요약과 액션 아이템 포함)
-    db_meeting = db.query(models.Meeting).options(
-        joinedload(models.Meeting.summaries),
-        joinedload(models.Meeting.action_items)
-    ).filter(models.Meeting.MEETING_ID == meeting_id).first()
+    # 회의 조회
+    db_meeting = meeting_crud.get_meeting(db=db, meeting_id=meeting_id)
     
     # 회의가 존재하지 않는 경우
     if not db_meeting:
@@ -239,30 +234,36 @@ def update_meeting(
         meeting=db_meeting,
         meeting_in=meeting_update
     )
-    
-    # dict로 변환하여 반환
+    # 최신 관계 로드 (summary, action_items)
+    from sqlalchemy.orm import joinedload
+    refreshed = db.query(models.Meeting).options(
+        joinedload(models.Meeting.summaries),
+        joinedload(models.Meeting.action_items)
+    ).filter(models.Meeting.MEETING_ID == updated_meeting.MEETING_ID).first()
+
+    # dict로 변환하여 스키마에 맞게 반환
     meeting_dict = {
-        "meeting_id": updated_meeting.MEETING_ID,
-        "creator_id": updated_meeting.CREATOR_ID,
-        "title": updated_meeting.TITLE,
-        "purpose": updated_meeting.PURPOSE,
-        "start_dt": updated_meeting.START_DT,
-        "end_dt": updated_meeting.END_DT,
-        "location": updated_meeting.LOCATION,
-        "content": updated_meeting.CONTENT,
-        "translated_content": updated_meeting.TRANSLATED_CONTENT,
-        "ai_summary": updated_meeting.AI_SUMMARY,
-        "participants": updated_meeting.PARTICIPANTS,
-        "key_decisions": updated_meeting.KEY_DECISIONS,
-        "next_steps": updated_meeting.NEXT_STEPS,
-        "audio_url": updated_meeting.AUDIO_URL,
+        "meeting_id": refreshed.MEETING_ID,
+        "creator_id": refreshed.CREATOR_ID,
+        "title": refreshed.TITLE,
+        "purpose": refreshed.PURPOSE,
+        "start_dt": refreshed.START_DT,
+        "end_dt": refreshed.END_DT,
+        "location": refreshed.LOCATION,
+        "content": refreshed.CONTENT,
+        "translated_content": refreshed.TRANSLATED_CONTENT,
+        "ai_summary": refreshed.AI_SUMMARY,
+        "participants": refreshed.PARTICIPANTS,
+        "key_decisions": refreshed.KEY_DECISIONS,
+        "next_steps": refreshed.NEXT_STEPS,
+        "audio_url": refreshed.AUDIO_URL,
         "summary": {
-            "summary_id": updated_meeting.summaries[0].SUMMARY_ID,
-            "content": updated_meeting.summaries[0].CONTENT,
-            "translated_content": updated_meeting.summaries[0].TRANSLATED_CONTENT,
-            "format": updated_meeting.summaries[0].FORMAT,
-            "created_dt": updated_meeting.summaries[0].CREATED_DT
-        } if updated_meeting.summaries else None,
+            "summary_id": refreshed.summaries[0].SUMMARY_ID,
+            "content": refreshed.summaries[0].CONTENT,
+            "translated_content": refreshed.summaries[0].TRANSLATED_CONTENT,
+            "format": refreshed.summaries[0].FORMAT,
+            "created_dt": refreshed.summaries[0].CREATED_DT
+        } if refreshed.summaries else None,
         "action_items": [
             {
                 "item_id": item.ITEM_ID,
@@ -277,10 +278,10 @@ def update_meeting(
                 "created_dt": item.CREATED_DT,
                 "updated_dt": item.UPDATED_DT
             }
-            for item in updated_meeting.action_items
-        ] if updated_meeting.action_items else []
+            for item in refreshed.action_items
+        ] if refreshed.action_items else []
     }
-    
+
     return meeting_dict
 
 # ==================== 5. 회의 삭제 ====================

@@ -41,13 +41,14 @@ async def websocket_endpoint(
     summary: bool = False,
     channels: int = 1, # 클라이언트로부터 채널 수 요청 받음 (기본 1)
     sampleRate: int = 16000, # 실제 AudioContext 샘플레이트
-    meetingId: str = None # 회의 ID (선택)
+    meetingId: str = None, # 회의 ID (선택)
+    participants: str = None # 참여자 목록 (쉼표 구분, 키워드 부스팅용)
 ):
     """
     메인 WebSocket 핸들러, 클라이언트와 Deepgram 간의 중계 역할을 합니다.
     """
     await websocket.accept()
-    logging.info(f"React <-> FastAPI WebSocket 연결 수립됨. (요청 채널: {channels}, 샘플레이트: {sampleRate}Hz, MeetingID: {meetingId})")
+    logging.info(f"React <-> FastAPI WebSocket 연결 수립됨. (요청 채널: {channels}, 샘플레이트: {sampleRate}Hz, MeetingID: {meetingId}), Participants: {participants})")
     
     settings = TranscribeSettings(translate=translate, summary=summary, meeting_id=meetingId)
     
@@ -63,8 +64,15 @@ async def websocket_endpoint(
     }
     
     try:
-        # 요청된 채널 수와 샘플레이트에 맞춰 Deepgram URL 생성
-        dg_url, dg_headers = stt_service.get_realtime_stt_url(channels=channels, sample_rate=sampleRate)
+        # 참여자 이름을 키워드 리스트로 파싱
+        keywords = []
+        if participants:
+            # 쉼표로 구분된 이름들을 리스트로 변환
+            keywords = [name.strip() for name in participants.split(",") if name.strip()]
+            logging.info(f"키워드 부스팅 활성화: {keywords}")
+        
+        # 요청된 채널 수와 키워드에 맞춰 Deepgram URL 생성
+        dg_url, dg_headers = stt_service.get_realtime_stt_url(channels=channels, keywords=keywords)
         
         # meetingId가 있으면 해당 ID로 파일 생성, 없으면 랜덤 생성
         # 파일 생성 시 사용된 ID를 file_id로 저장

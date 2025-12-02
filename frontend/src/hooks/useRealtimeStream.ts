@@ -58,7 +58,7 @@ interface RealtimeStreamControls {
     translation: string;
     timelineSummaries: TimelineSummary[];
     isGeneratingSummary: boolean;
-    startRecording: (meetingId?: string) => Promise<void>;
+    startRecording: (meetingId?: string, participants?: string) => Promise<void>;
     stopRecording: () => void;
     pauseRecording: () => void;
     resumeRecording: () => void;
@@ -233,7 +233,7 @@ const useRealtimeStream = (): RealtimeStreamControls => {
                 if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                     // event.data is ArrayBuffer (Int16)
                     // console.log(`Sending audio chunk: ${event.data.byteLength} bytes`); // Debug
-
+                    
                     // [Debug] 가끔씩 데이터 내용 확인
                     if (Math.random() < 0.01) {
                         const int16Data = new Int16Array(event.data);
@@ -553,7 +553,7 @@ const useRealtimeStream = (): RealtimeStreamControls => {
     }, [vadPause]);
 
     // 녹음 시작
-    const startRecording = useCallback(async (meetingId?: string) => {
+    const startRecording = useCallback(async (meetingId?: string, participants?: string) => {
         if (vadLoading) {
             console.log("VAD 로딩 중...");
             return;
@@ -579,6 +579,12 @@ const useRealtimeStream = (): RealtimeStreamControls => {
             let wsUrl = WS_URL + `?translate=true&summary=true&channels=${channels}&sampleRate=${transmitSampleRate}`;
             if (meetingId) {
                 wsUrl += `&meetingId=${meetingId}`;
+            }
+            
+            // 참여자 이름을 키워드 부스팅용 파라미터로 추가
+            if (participants && participants.trim()) {
+                wsUrl += `&participants=${encodeURIComponent(participants)}`;
+                console.log(`키워드 부스팅 활성화 - 참여자: ${participants}`);
             }
             
             console.log(`WebSocket 연결 시도 (Channels: ${channels}, SampleRate: ${transmitSampleRate}Hz [Downsampled], MeetingID: ${meetingId}):`, wsUrl);
