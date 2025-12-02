@@ -48,6 +48,7 @@ export interface TranscriptSegment {
     speaker: string;
     text: string;
     isFinal: boolean;
+    channelType?: 'Mic' | 'System';  // ✅ 이 줄 추가
 }
 
 interface RealtimeStreamControls {

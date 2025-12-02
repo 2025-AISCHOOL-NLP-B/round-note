@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { MeetingStart } from "@/features/realtime/MeetingStart";
 import { MeetingListView } from "@/features/meetings/MeetingListView";
+import { MeetingList } from "@/features/meetings/MeetingList";
 import { MeetingChatbotPage } from "@/features/meetings/MeetingChatbotPage";
 import { ActionItemsPage } from "@/features/action-items/ActionItemsPage";
 import { TemplateSettings } from "@/features/settings/TemplateSettings";
@@ -152,9 +153,26 @@ export function Dashboard() {
     setMeetings(newMeetings);
   };
 
-  const handleDeleteMeeting = (id: string) => {
-    const newMeetings = meetings.filter((m) => m.id !== id);
-    setMeetings(newMeetings);
+  const handleDeleteMeeting = async (id: string) => {
+    try {
+      // 백엔드 API 호출하여 삭제
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/meetings/${id}`, {
+        method: 'DELETE',
+        credentials: 'include', // httpOnly Cookie 전송
+      });
+
+      if (response.ok) {
+        // 성공 시 프론트엔드 상태 업데이트
+        const newMeetings = meetings.filter((m) => m.id !== id);
+        setMeetings(newMeetings);
+      } else {
+        console.error('Failed to delete meeting:', await response.text());
+        alert('회의록 삭제에 실패했습니다.');
+      }
+    } catch (error) {
+      console.error('Error deleting meeting:', error);
+      alert('회의록 삭제 중 오류가 발생했습니다.');
+    }
   };
 
   const handleLogout = async () => {
@@ -174,81 +192,153 @@ export function Dashboard() {
     }
   };
 
-  const renderContent = () => {
-    switch (activeSection) {
-      case "home":
-        return (
-          <div className="space-y-5">
-            <div className="bg-gradient-to-br from-primary to-blue-700 rounded-2xl p-8 shadow-md text-white w-[1000px] h-[200px]">
-              <h2 className="mb-3 text-white">회의 시작하기</h2>
-              <p className="text-white/90 mb-6">
-                실시간 음성 인식으로 회의를 기록하고 자동으로 요약과 액션
-                아이템을 추출하세요
-              </p>
-              <Button
-                onClick={() => setActiveSection("start")}
-                size="lg"
-                className="gap-2 bg-white text-primary hover:bg-white/90 shadow-md"
-              >
-                <PlayCircle className="w-5 h-5" />새 회의 시작
-              </Button>
-            </div>
+  // ✅ 1. Home 섹션 렌더링 함수 분리
+  const renderHome = () => (
+    <div className="space-y-5">
+      <div className="bg-gradient-to-br from-primary to-blue-700 rounded-2xl p-8 shadow-md text-white w-[1000px] h-[200px]">
+        <h2 className="mb-3 text-white">회의 시작하기</h2>
+        <p className="text-white/90 mb-6">
+          실시간 음성 인식으로 회의를 기록하고 자동으로 요약과 액션
+          아이템을 추출하세요
+        </p>
+        <Button
+          onClick={() => setActiveSection("start")}
+          size="lg"
+          className="gap-2 bg-white text-primary hover:bg-white/90 shadow-md"
+        >
+          <PlayCircle className="w-5 h-5" />새 회의 시작
+        </Button>
+      </div>
 
-            <div className="grid md:grid-cols-2 gap-4">
-              <div
-                className="bg-white rounded-2xl p-6 shadow-sm border border-border cursor-pointer hover:shadow-md hover:border-primary/30 transition-all flex flex-col justify-between min-h-[140px]"
-                onClick={() => setActiveSection("history")}
-              >
-                <div>
-                  <h3 className="mb-2 text-foreground">전체 회의록</h3>
-                  <p className="text-3xl mb-2 text-primary">
-                    {meetings.length}개
-                  </p>
-                </div>
-                <p className="text-xs md:text-sm text-muted-foreground text-right mt-1">
-                  회의 내역 보기 →
+      <div className="grid md:grid-cols-2 gap-4">
+        <div
+          className="bg-white rounded-2xl p-6 shadow-sm border border-border cursor-pointer hover:shadow-md hover:border-primary/30 transition-all flex flex-col justify-between min-h-[140px]"
+          onClick={() => setActiveSection("history")}
+        >
+          <div>
+            <h3 className="mb-2 text-foreground">전체 회의록</h3>
+            <p className="text-3xl mb-2 text-primary">
+              {meetings.length}개
+            </p>
+          </div>
+          <p className="text-xs md:text-sm text-muted-foreground text-right mt-1">
+            회의 내역 보기 →
+          </p>
+        </div>
+
+        <div
+          className="bg-white rounded-2xl p-6 shadow-sm border border-border cursor-pointer hover:shadow-md hover:border-primary/30 transition-all flex flex-col justify-between min-h-[140px]"
+          onClick={() => setActiveSection("actions")}
+        >
+          <div>
+            <h3 className="mb-2 text-foreground">액션 아이템</h3>
+            <div className="flex items-end gap-4 mb-2">
+              <div>
+                <p className="text-xs text-muted-foreground">진행 중</p>
+                <p className="text-2xl" style={{ color: '#FFA726' }}>
+                  {meetings.reduce(
+                    (acc, m) =>
+                      acc +
+                      m.actionItems.filter((a) => !a.completed).length,
+                    0
+                  )}
                 </p>
               </div>
-
-              <div
-                className="bg-white rounded-2xl p-6 shadow-sm border border-border cursor-pointer hover:shadow-md hover:border-primary/30 transition-all flex flex-col justify-between min-h-[140px]"
-                onClick={() => setActiveSection("actions")}
-              >
-                <div>
-                  <h3 className="mb-2 text-foreground">액션 아이템</h3>
-                  <div className="flex items-end gap-4 mb-2">
-                    <div>
-                      <p className="text-xs text-muted-foreground">진행 중</p>
-                      <p className="text-2xl" style={{ color: '#FFA726' }}>
-                        {meetings.reduce(
-                          (acc, m) =>
-                            acc +
-                            m.actionItems.filter((a) => !a.completed).length,
-                          0
-                        )}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">완료</p>
-                      <p className="text-2xl text-emerald-500">
-                        {meetings.reduce(
-                          (acc, m) =>
-                            acc +
-                            m.actionItems.filter((a) => a.completed).length,
-                          0
-                        )}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-                <p className="text-xs md:text-sm text-muted-foreground text-right mt-1">
-                  액션 아이템 관리 →
+              <div>
+                <p className="text-xs text-muted-foreground">완료</p>
+                <p className="text-2xl text-emerald-500">
+                  {meetings.reduce(
+                    (acc, m) =>
+                      acc +
+                      m.actionItems.filter((a) => a.completed).length,
+                    0
+                  )}
                 </p>
               </div>
             </div>
           </div>
-        );
+          <p className="text-xs md:text-sm text-muted-foreground text-right mt-1">
+            액션 아이템 관리 →
+          </p>
+        </div>
+      </div>
+    </div>
+  );
 
+  // ✅ 2. Settings 섹션 렌더링 함수 분리
+  const renderSettings = () => (
+    <div className="bg-white rounded-2xl p-8 shadow-sm border border-border w-[1100px] max-w-[1200px] mx-auto">
+      <h2 className="text-2xl font-bold mb-6 text-foreground">설정</h2>
+      <div className="grid gap-4">
+        <div
+          className="p-4 border rounded-lg hover:bg-slate-50 cursor-pointer transition-colors flex items-center justify-between group"
+          onClick={() => setActiveSection("template")}
+        >
+          <div className="flex items-center gap-4">
+            <div className="p-2 bg-blue-50 rounded-lg group-hover:bg-blue-100 transition-colors">
+              <FileEdit className="w-5 h-5 text-blue-600" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-foreground">회의록 템플릿 설정</h3>
+              <p className="text-sm text-muted-foreground">회의록 기본 양식을 관리합니다</p>
+            </div>
+          </div>
+          <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-gray-600" />
+        </div>
+
+        <div
+          className="p-4 border rounded-lg hover:bg-slate-50 cursor-pointer transition-colors flex items-center justify-between group"
+          onClick={() => setActiveSection("translation-settings")}
+        >
+          <div className="flex items-center gap-4">
+            <div className="p-2 bg-purple-50 rounded-lg group-hover:bg-purple-100 transition-colors">
+              <Languages className="w-5 h-5 text-purple-600" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-foreground">번역 설정</h3>
+              <p className="text-sm text-muted-foreground">실시간 번역 언어를 설정합니다</p>
+            </div>
+          </div>
+          <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-gray-600" />
+        </div>
+
+        <div
+          className="p-4 border rounded-lg hover:bg-slate-50 cursor-pointer transition-colors flex items-center justify-between group"
+          onClick={() => setActiveSection("keyword-settings")}
+        >
+          <div className="flex items-center gap-4">
+            <div className="p-2 bg-green-50 rounded-lg group-hover:bg-green-100 transition-colors">
+              <Tag className="w-5 h-5 text-green-600" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-foreground">키워드 설정</h3>
+              <p className="text-sm text-muted-foreground">중요 키워드 알림을 설정합니다</p>
+            </div>
+          </div>
+          <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-gray-600" />
+        </div>
+
+        <div
+          className="p-4 border rounded-lg hover:bg-slate-50 cursor-pointer transition-colors flex items-center justify-between group"
+          onClick={() => setActiveSection("platform-settings")}
+        >
+          <div className="flex items-center gap-4">
+            <div className="p-2 bg-orange-50 rounded-lg group-hover:bg-orange-100 transition-colors">
+              <Link2 className="w-5 h-5 text-orange-600" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-foreground">연동 설정</h3>
+              <p className="text-sm text-muted-foreground">외부 플랫폼 연동을 관리합니다</p>
+            </div>
+          </div>
+          <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-gray-600" />
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderContent = () => {
+    switch (activeSection) {
       case "start":
         return (
           <MeetingStart meetings={meetings} onAddMeeting={handleAddMeeting} />
@@ -557,7 +647,22 @@ export function Dashboard() {
 
         {/* Main Content */}
         <main className="flex-1 p-4 md:p-8 overflow-auto">
-          <div className="max-w-6xl mx-auto">{renderContent()}</div>
+          <div className="max-w-6xl mx-auto">
+            {/* ✅ Hybrid 렌더링 방식 적용 */}
+
+            {/* 1. Home 섹션: 항상 렌더링하되 hidden으로 제어 */}
+            <div className={activeSection === "home" ? "block" : "hidden"}>
+              {renderHome()}
+            </div>
+
+            {/* 2. Settings 섹션: 항상 렌더링하되 hidden으로 제어 */}
+            <div className={activeSection === "settings" ? "block" : "hidden"}>
+              {renderSettings()}
+            </div>
+
+            {/* 3. 나머지 섹션: 기존대로 조건부 렌더링 (필요할 때만 마운트) */}
+            {activeSection !== "home" && activeSection !== "settings" && renderContent()}
+          </div>
         </main>
       </div>
 
