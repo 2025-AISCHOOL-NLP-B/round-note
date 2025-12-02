@@ -28,6 +28,9 @@ class TranscribeSettings:
         self.summary = summary
         self.is_paused = False  # 일시정지 상태 추가
         self.meeting_id = meeting_id # 회의 ID 저장
+        # 채널별 일시정지 상태 (Mic=Left, System=Right)
+        self.paused_mic = False
+        self.paused_system = False
 
 # 메인 WebSocket 핸들러
 @router.websocket("/ws")
@@ -300,6 +303,14 @@ async def handle_client_uplink(
                         logging.info(f"--> [CONTROL] 일시정지 상태 변경: {value} ({'일시정지' if value else '재개'})")
                         # 클라이언트에게 설정이 바뀌었음을 알리는 피드백 (선택적)
                         await client_ws.send_json({"type": "setting_update", "paused": value})
+                    elif command == "SET_PAUSED_SYSTEM" and isinstance(value, bool):
+                        settings.paused_system = value
+                        logging.info(f"--> [CONTROL] 시스템 채널 일시정지 상태 변경: {value}")
+                        await client_ws.send_json({"type": "setting_update", "paused_system": value})
+                    elif command == "SET_PAUSED_MIC" and isinstance(value, bool):
+                        settings.paused_mic = value
+                        logging.info(f"--> [CONTROL] 마이크 채널 일시정지 상태 변경: {value}")
+                        await client_ws.send_json({"type": "setting_update", "paused_mic": value})
                     
                     elif command == "SET_MEETING_ID" and isinstance(value, str):
                         settings.meeting_id = value
@@ -363,6 +374,11 @@ async def forward_to_client(
                 
                 # 채널 정보 확인 (0: Mic, 1: System)
                 channel_index = result.get("channel_index", [0, 1])[0]
+
+                # 채널별 일시정지 상태에 따른 필터링 (마이크/시스템 각각)
+                if (channel_index == 0 and settings.paused_mic) or (channel_index == 1 and settings.paused_system):
+                    logging.debug(f"DG RECEIVER: 채널 {channel_index} 일시정지 중 - 최종 전사 무시")
+                    continue
                 
                 if speaker_id is not None:
                     prefix = "System" if channel_index == 1 else "Mic"
@@ -377,29 +393,39 @@ async def forward_to_client(
                 
                 # 4. 요약 활성화 시 버퍼에 저장
                 if settings.summary and not settings.is_paused:
-                    current_time = time.time()
-                    summary_state["transcript_buffer"].append({
-                        "text": final_text,
-                        "timestamp": current_time
-                    })
-                    
-                    # 첫 전사 시간 기록
-                    if summary_state["first_transcript_time"] is None:
-                        summary_state["first_transcript_time"] = current_time
-                        logging.info(f"✅ 첫 전사 시간 기록: {current_time}")
-                    
-                    buffer_count = len(summary_state["transcript_buffer"])
-                    logging.info(f"📝 전사 버퍼 추가: 총 {buffer_count}개 항목")
+                    # 채널별 일시정지 상태 확인 후 버퍼 적재
+                    if (channel_index == 0 and settings.paused_mic) or (channel_index == 1 and settings.paused_system):
+                        logging.debug(f"Summary Buffer: 채널 {channel_index} 일시정지 - 버퍼 적재 스킵")
+                    else:
+                        current_time = time.time()
+                        summary_state["transcript_buffer"].append({
+                            "text": final_text,
+                            "timestamp": current_time
+                        })
+                        # 첫 전사 시간 기록
+                        if summary_state["first_transcript_time"] is None:
+                            summary_state["first_transcript_time"] = current_time
+                            logging.info(f"✅ 첫 전사 시간 기록: {current_time}")
+                        buffer_count = len(summary_state["transcript_buffer"])
+                        logging.info(f"📝 전사 버퍼 추가: 총 {buffer_count}개 항목")
                 
                 # 5. 번역 태스크 생성
                 if settings.translate:
-                    asyncio.create_task(
-                        get_translation_and_send(client_ws, final_text, llm_service)
-                    )
+                    # 번역도 채널 일시정지 시 스킵
+                    if (channel_index == 0 and settings.paused_mic) or (channel_index == 1 and settings.paused_system):
+                        logging.debug(f"Translation Task: 채널 {channel_index} 일시정지 - 번역 스킵")
+                    else:
+                        asyncio.create_task(
+                            get_translation_and_send(client_ws, final_text, llm_service)
+                        )
                 
             else:
                 # 5. 임시 텍스트 처리: React로 임시 전사 텍스트 전송
-                await client_ws.send_json({"type": "partial_transcript", "text": transcript})
+                channel_index = result.get("channel_index", [0, 1])[0]
+                if (channel_index == 0 and settings.paused_mic) or (channel_index == 1 and settings.paused_system):
+                    logging.debug(f"DG RECEIVER: 채널 {channel_index} 일시정지 중 - 임시 전사 무시")
+                else:
+                    await client_ws.send_json({"type": "partial_transcript", "text": transcript})
                 
     except WebSocketDisconnect:
         # 이 함수가 종료되면 websocket_endpoint의 gather도 종료됩니다.
