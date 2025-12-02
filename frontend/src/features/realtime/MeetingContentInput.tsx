@@ -52,6 +52,7 @@ if (ENABLE_SUPABASE) {
   }
 }
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/ui/tabs';
+import ProcessingOverlay from '@/shared/ui/processing-overlay';
 import {
   Select,
   SelectContent,
@@ -329,11 +330,15 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
 
   const toggleRecording = async () => {
     if (isRecording) {
-      setIsProcessing(true);
-      stopRecording();
-      stopAudioRecording();
-      // 회의 종료 및 저장 후 redirect
+      // 전사 내용이 없으면 자원만 정리하고 종료
+      if (!content.trim()) {
+        stopRecording();
+        stopAudioRecording();
+        return;
+      }
+      // 전사 내용이 있으면 정상 저장 플로우
       await handleSubmit();
+      return;
     } else {
       try {
         // 1) 회의 미리 생성 (is_realtime 플래그)
@@ -365,14 +370,18 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
 
+    // 이 함수는 이제 toggleRecording에서 content가 있을 때만 호출됨
     if (!content.trim()) {
       toast.error('회의 내용을 입력해주세요.');
+      setIsProcessing(false);
       return;
     }
 
+    // 녹음 중이면 정리
     if (isRecording) {
       stopRecording();
     }
+    stopAudioRecording();
 
     setIsProcessing(true);
 
@@ -486,20 +495,12 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50/50 via-slate-50 to-indigo-50/50 pb-8 px-2 md:px-4 pt-4">
       {/* 로딩 오버레이 */}
-      {isProcessing && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
-          <Card className="p-8 bg-white shadow-2xl">
-            <div className="flex flex-col items-center gap-4">
-              <Sparkles className="w-12 h-12 text-primary animate-spin" />
-              <div className="text-center">
-                <h3 className="text-lg font-semibold text-slate-800 mb-2">회의 종료 중...</h3>
-                <p className="text-sm text-slate-600">회의록을 저장하고 AI 요약을 생성하고 있습니다.</p>
-                <p className="text-xs text-slate-500 mt-2">잠시만 기다려주세요.</p>
-              </div>
-            </div>
-          </Card>
-        </div>
-      )}
+      <ProcessingOverlay
+        open={isProcessing}
+        title="회의 종료 중..."
+        message="회의록을 저장하고 AI 요약을 생성하고 있습니다."
+        subMessage="잠시만 기다려주세요."
+      />
 
       {/* Top Bar with Title and Date */}
       <Card className="mb-4 border-slate-200 shadow-md">
