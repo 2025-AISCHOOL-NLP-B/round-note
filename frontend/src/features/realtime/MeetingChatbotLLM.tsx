@@ -2,9 +2,14 @@ import { useState, useRef, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
 import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
-import { Send, Bot, User as UserIcon, RefreshCw, AlertCircle } from 'lucide-react';
+import { Send, Bot, User as UserIcon, RefreshCw, AlertCircle, Sparkles } from 'lucide-react';
 import type { Meeting } from '@/features/dashboard/Dashboard';
-import { chatWithMeeting, type ChatMessage as ApiChatMessage } from '@/features/meetings/reportsService';
+import {
+  chatWithMeetingFulltext,
+  getQuickQuestions,
+  type ChatMessage as ApiChatMessage,
+  type QuickQuestion
+} from '@/features/meetings/reportsService';
 
 interface Message {
   id: string;
@@ -32,11 +37,58 @@ export function MeetingChatbotLLM({ meeting, useBackendAPI = true }: MeetingChat
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [connectionError, setConnectionError] = useState(false);
+  const [quickQuestions, setQuickQuestions] = useState<QuickQuestion[]>([]);
+  const [showQuickQuestions, setShowQuickQuestions] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // 빠른 질문 선택지 로드
+  useEffect(() => {
+    const loadQuickQuestions = async () => {
+      try {
+        const response = await getQuickQuestions(meeting.id);
+        setQuickQuestions(response.questions);
+      } catch (error) {
+        console.error('Failed to load quick questions:', error);
+        // 기본 질문 선택지 사용
+        setQuickQuestions([
+          {
+            id: 'summary',
+            question: '이번 회의 핵심 내용을 요약해주세요',
+            description: '회의의 주요 내용, 논의사항, 결론을 간단히 정리해드립니다',
+            category: 'summary',
+            icon: '📝'
+          },
+          {
+            id: 'action',
+            question: '내가 해야 할 일이 무엇인가요?',
+            description: '회의에서 나에게 할당된 액션 아이템과 마감일을 확인합니다',
+            category: 'action',
+            icon: '✅'
+          },
+          {
+            id: 'decision',
+            question: '주요 결정사항과 합의된 내용은 무엇인가요?',
+            description: '회의에서 내려진 의사결정과 팀이 합의한 사항을 알려드립니다',
+            category: 'decision',
+            icon: '🎯'
+          },
+          {
+            id: 'adversarial',
+            question: '이 회의에서 놓친 부분이나 리스크가 있나요?',
+            description: '적대적 지능으로 논리적 불일치, 누락된 논점, 과거 결정과의 모순, 잠재 리스크를 탐지합니다',
+            category: 'adversarial',
+            icon: '🔍'
+          },
+        ]);
+      }
+    };
+
+    loadQuickQuestions();
+  }, [meeting.id]);
 
   // 메시지 히스토리를 API 형식으로 변환
   const getApiHistory = (): ApiChatMessage[] => {
@@ -78,7 +130,7 @@ export function MeetingChatbotLLM({ meeting, useBackendAPI = true }: MeetingChat
           participants.add(item.assignee);
         }
       });
-      
+
       if (participants.size === 0) {
         return '회의록에서 참여자 정보를 찾을 수 없습니다.';
       }
@@ -96,28 +148,29 @@ export function MeetingChatbotLLM({ meeting, useBackendAPI = true }: MeetingChat
     return `죄송합니다. 현재 AI 서버와 연결되지 않아 기본 응답을 제공합니다.\n\n다음과 같은 질문을 시도해보세요:\n• "회의 요약해줘"\n• "액션 아이템 알려줘"\n• "참여자가 누구야?"`;
   };
 
-  const handleSend = async () => {
-    if (!input.trim()) return;
+  const handleSend = async (questionText?: string) => {
+    const messageContent = questionText || input.trim();
+    if (!messageContent) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
-      content: input.trim(),
+      content: messageContent,
       timestamp: new Date(),
     };
 
     setMessages(prev => [...prev, userMessage]);
-    const currentInput = input.trim();
     setInput('');
     setIsTyping(true);
     setConnectionError(false);
+    setShowQuickQuestions(false); // 질문 후 선택지 숨김
 
     try {
       if (useBackendAPI) {
-        // 백엔드 API 호출
-        const response = await chatWithMeeting(
-          meeting.id,
-          currentInput,
+        // 백엔드 fulltext API 호출 (적대적 지능 자동 감지)
+        const response = await chatWithMeetingFulltext(
+          [meeting.id],
+          messageContent,
           getApiHistory()
         );
 
@@ -132,8 +185,8 @@ export function MeetingChatbotLLM({ meeting, useBackendAPI = true }: MeetingChat
       } else {
         // 로컬 로직 사용
         await new Promise(resolve => setTimeout(resolve, 500));
-        const response = generateLocalResponse(currentInput);
-        
+        const response = generateLocalResponse(messageContent);
+
         const assistantMessage: Message = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
@@ -146,10 +199,10 @@ export function MeetingChatbotLLM({ meeting, useBackendAPI = true }: MeetingChat
     } catch (error) {
       console.error('Chat API error:', error);
       setConnectionError(true);
-      
+
       // 에러 시 로컬 폴백
-      const fallbackResponse = generateLocalResponse(currentInput);
-      
+      const fallbackResponse = generateLocalResponse(messageContent);
+
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
@@ -162,6 +215,10 @@ export function MeetingChatbotLLM({ meeting, useBackendAPI = true }: MeetingChat
     } finally {
       setIsTyping(false);
     }
+  };
+
+  const handleQuickQuestionClick = (question: string) => {
+    handleSend(question);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -246,6 +303,40 @@ export function MeetingChatbotLLM({ meeting, useBackendAPI = true }: MeetingChat
                 </div>
               </div>
             ))}
+
+            {/* 빠른 질문 선택지 */}
+            {showQuickQuestions && quickQuestions.length > 0 && messages.length === 1 && (
+              <div className="space-y-3 mt-4">
+                <div className="flex items-center gap-2 text-sm font-medium text-gray-600">
+                  <Sparkles className="w-4 h-4" />
+                  추천 질문
+                </div>
+                <div className="grid grid-cols-1 gap-2">
+                  {quickQuestions.map((q) => (
+                    <Button
+                      key={q.id}
+                      variant="outline"
+                      className="h-auto p-3 justify-start text-left hover:bg-blue-50 hover:border-blue-300 transition-all"
+                      onClick={() => handleQuickQuestionClick(q.question)}
+                      disabled={isTyping}
+                    >
+                      <div className="flex gap-3 w-full">
+                        <span className="text-2xl flex-shrink-0">{q.icon}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-sm text-gray-900">
+                            {q.question}
+                          </div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            {q.description}
+                          </div>
+                        </div>
+                      </div>
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {isTyping && (
               <div className="flex gap-3">
                 <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-purple-600">
@@ -285,7 +376,7 @@ export function MeetingChatbotLLM({ meeting, useBackendAPI = true }: MeetingChat
               placeholder="회의에 대해 질문하세요..."
               className="flex-1"
             />
-            <Button onClick={handleSend} disabled={!input.trim() || isTyping}>
+            <Button onClick={() => handleSend()} disabled={!input.trim() || isTyping}>
               <Send className="w-4 h-4" />
             </Button>
           </div>

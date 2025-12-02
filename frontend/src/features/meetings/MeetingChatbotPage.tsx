@@ -2,9 +2,10 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
 import { Input } from '@/shared/ui/input';
 import { Button } from '@/shared/ui/button';
-import { Search, Calendar, Clock, Check, Send, Bot, User as UserIcon, CheckSquare, Square } from 'lucide-react';
+import { Search, Calendar, Clock, Check, Send, Bot, User as UserIcon, CheckSquare, Square, Sparkles } from 'lucide-react';
 import type { Meeting } from '@/features/dashboard/Dashboard';
 import { fetchWithAuth, handleAuthResponse } from '@/utils/auth';
+import { getQuickQuestions, type QuickQuestion } from '@/features/meetings/reportsService';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -27,6 +28,8 @@ export function MeetingChatbotPage({ meetings }: MeetingChatbotPageProps) {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [isTyping, setIsTyping] = useState(false);
+    const [quickQuestions, setQuickQuestions] = useState<QuickQuestion[]>([]);
+    const [showQuickQuestions, setShowQuickQuestions] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     // 검색어에 따른 회의 필터링
@@ -85,7 +88,7 @@ export function MeetingChatbotPage({ meetings }: MeetingChatbotPageProps) {
     };
 
     // 선택된 회의들로 챗봇 시작 (이전 대화는 유지하고 누적)
-    const handleConfirmSelection = () => {
+    const handleConfirmSelection = async () => {
         if (selectedMeetings.length === 0) return;
 
         // 새로운 회의 세션 시작 메시지 생성
@@ -100,13 +103,140 @@ export function MeetingChatbotPage({ meetings }: MeetingChatbotPageProps) {
         // 이전 대화 내용은 유지하고 새로운 세션 메시지 추가
         setMessages(prev => [...prev, ...sessionMessages]);
         setActiveChats([...selectedMeetings]);
+
+        // 질문 선택지 로드
+        await loadQuickQuestions();
+        setShowQuickQuestions(true);
     };
 
-    // API를 통한 응답 생성
+    // 빠른 질문 선택지 로드
+    const loadQuickQuestions = async () => {
+        console.log('[MeetingChatbotPage] Loading quick questions');
+
+        // 기본 질문 선택지 설정
+        const defaultQuestions: QuickQuestion[] = [
+            {
+                id: 'summary',
+                question: '이번 회의 핵심 내용을 요약해주세요',
+                description: '회의의 주요 내용, 논의사항, 결론을 간단히 정리해드립니다',
+                category: 'summary',
+                icon: '📝'
+            },
+            {
+                id: 'action',
+                question: '내가 해야 할 일이 무엇인가요?',
+                description: '회의에서 나에게 할당된 액션 아이템과 마감일을 확인합니다',
+                category: 'action',
+                icon: '✅'
+            },
+            {
+                id: 'decision',
+                question: '주요 결정사항과 합의된 내용은 무엇인가요?',
+                description: '회의에서 내려진 의사결정과 팀이 합의한 사항을 알려드립니다',
+                category: 'decision',
+                icon: '🎯'
+            },
+            {
+                id: 'adversarial',
+                question: '이 회의에서 놓친 부분이나 리스크가 있나요?',
+                description: '적대적 지능으로 논리적 불일치, 누락된 논점, 과거 결정과의 모순, 잠재 리스크를 탐지합니다',
+                category: 'adversarial',
+                icon: '🔍'
+            },
+        ];
+
+        setQuickQuestions(defaultQuestions);
+        console.log('[MeetingChatbotPage] Default questions set:', defaultQuestions.length);
+
+        // API에서 질문 가져오기 시도 (단일 회의만)
+        if (selectedMeetings.length === 1) {
+            try {
+                const response = await getQuickQuestions(selectedMeetings[0].id);
+                console.log('[MeetingChatbotPage] API questions loaded:', response.questions.length);
+                setQuickQuestions(response.questions);
+            } catch (error) {
+                console.error('[MeetingChatbotPage] Failed to load quick questions from API:', error);
+                // 기본 질문 유지
+            }
+        }
+    };
+
+    // ✅ 스트리밍 응답 생성 (실시간)
+    const generateStreamingResponse = async (question: string, messageId: string): Promise<void> => {
+        try {
+            const meetingIds = activeChats.map(m => m.id);
+            const conversationHistory = messages
+                .filter(m => m.role === 'user' || m.role === 'assistant')
+                .map(m => ({
+                    role: m.role,
+                    content: m.content
+                }));
+
+            const response = await fetchWithAuth(`${API_URL}/api/v1/chatbot/ask-streaming`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    meeting_ids: meetingIds,
+                    question: question,
+                    conversation_history: conversationHistory.length > 0 ? conversationHistory : undefined,
+                }),
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const reader = response.body?.getReader();
+            const decoder = new TextDecoder();
+            let fullText = '';
+
+            if (reader) {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = line.slice(6);
+                            if (data === '[DONE]') {
+                                return;
+                            }
+                            fullText += data;
+
+                            // 실시간으로 메시지 업데이트
+                            setMessages(prev => prev.map(msg =>
+                                msg.id === messageId
+                                    ? { ...msg, content: fullText }
+                                    : msg
+                            ));
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('스트리밍 챗봇 API 호출 오류:', error);
+            throw error;
+        }
+    };
+
+    // API를 통한 응답 생성 (일반)
     const generateResponse = async (question: string): Promise<string> => {
         try {
             // activeChats에서 meeting ID 추출
             const meetingIds = activeChats.map(m => m.id);
+
+            // ✅ 개선: 전체 대화 히스토리 전송 (무제한)
+            const conversationHistory = messages
+                .filter(m => m.role === 'user' || m.role === 'assistant')
+                .map(m => ({
+                    role: m.role,
+                    content: m.content
+                }));
 
             const response = await fetchWithAuth(`${API_URL}/api/v1/chatbot/ask-fulltext`, {
                 method: 'POST',
@@ -116,6 +246,7 @@ export function MeetingChatbotPage({ meetings }: MeetingChatbotPageProps) {
                 body: JSON.stringify({
                     meeting_ids: meetingIds,
                     question: question,
+                    conversation_history: conversationHistory.length > 0 ? conversationHistory : undefined,
                 }),
             });
             await handleAuthResponse(response);
@@ -128,33 +259,37 @@ export function MeetingChatbotPage({ meetings }: MeetingChatbotPageProps) {
         }
     };
 
-    const handleSend = async () => {
-        if (!input.trim() || activeChats.length === 0) return;
+    const handleSend = async (questionText?: string) => {
+        const question = (questionText || input).trim();
+        if (!question || activeChats.length === 0) return;
 
         const userMessage: Message = {
             id: Date.now().toString(),
             role: 'user',
-            content: input.trim(),
+            content: question,
             timestamp: new Date(),
         };
 
         setMessages(prev => [...prev, userMessage]);
-        const currentInput = input.trim();
         setInput('');
         setIsTyping(true);
+        setShowQuickQuestions(false); // 질문 후 선택지 숨김
+        const currentInput = question;
 
         try {
-            // 실제 AI API 호출 (여러 회의 컨텍스트 전달)
-            const response = await generateResponse(currentInput);
-
+            // ✅ 항상 스트리밍 모드로 동작
+            const assistantMessageId = (Date.now() + 1).toString();
             const assistantMessage: Message = {
-                id: (Date.now() + 1).toString(),
+                id: assistantMessageId,
                 role: 'assistant',
-                content: response,
+                content: '', // 빈 내용으로 시작
                 timestamp: new Date(),
             };
 
             setMessages(prev => [...prev, assistantMessage]);
+            setIsTyping(false); // 스트리밍 중에는 typing 표시 해제
+
+            await generateStreamingResponse(currentInput, assistantMessageId);
         } catch (error) {
             console.error('Chat error:', error);
 
@@ -169,8 +304,6 @@ export function MeetingChatbotPage({ meetings }: MeetingChatbotPageProps) {
             };
 
             setMessages(prev => [...prev, errorMessage]);
-        } finally {
-            setIsTyping(false);
         }
     };
 
@@ -295,6 +428,44 @@ export function MeetingChatbotPage({ meetings }: MeetingChatbotPageProps) {
                                 </div>
                             ) : (
                                 <div className="space-y-4">
+                                    {/* 빠른 질문 선택지 */}
+                                    {showQuickQuestions && quickQuestions.length > 0 && (
+                                        <div className="space-y-3 bg-gradient-to-r from-blue-50 to-purple-50 p-4 rounded-lg border-2 border-blue-200">
+                                            <div className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                                                <Sparkles className="w-5 h-5 text-blue-600" />
+                                                추천 질문 선택하기
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-3">
+                                                {quickQuestions.map((q) => {
+                                                    console.log(`[MeetingChatbotPage] Rendering question: ${q.question}`);
+                                                    return (
+                                                        <button
+                                                            key={q.id}
+                                                            className="text-left p-4 rounded-lg border-2 border-gray-200 bg-white hover:border-blue-400 hover:bg-blue-50 hover:shadow-md transition-all"
+                                                            onClick={() => {
+                                                                console.log('[MeetingChatbotPage] Question clicked:', q.question);
+                                                                handleSend(q.question);
+                                                            }}
+                                                            disabled={isTyping}
+                                                        >
+                                                            <div className="flex gap-3 items-start">
+                                                                <span className="text-3xl flex-shrink-0">{q.icon}</span>
+                                                                <div className="flex-1 min-w-0">
+                                                                    <div className="font-semibold text-sm text-gray-900 leading-tight mb-1">
+                                                                        {q.question}
+                                                                    </div>
+                                                                    <div className="text-xs text-gray-600 leading-snug">
+                                                                        {q.description}
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    )}
+
                                     {messages.map((message) => (
                                         <div
                                             key={message.id}
@@ -377,7 +548,7 @@ export function MeetingChatbotPage({ meetings }: MeetingChatbotPageProps) {
                                     disabled={activeChats.length === 0}
                                 />
                                 <Button
-                                    onClick={handleSend}
+                                    onClick={() => handleSend()}
                                     disabled={!input.trim() || isTyping || activeChats.length === 0}
                                 >
                                     <Send className="w-4 h-4" />
