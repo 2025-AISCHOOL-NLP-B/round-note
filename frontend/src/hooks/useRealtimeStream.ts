@@ -802,10 +802,19 @@ const useRealtimeStream = (): RealtimeStreamControls => {
 
         console.log("녹음 일시정지");
         try {
-            // 백엔드에 일시정지 상태 알림
+            // 백엔드에 일시정지 상태 알림 (채널별 + 글로벌)
             if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                 wsRef.current.send(JSON.stringify({ command: "SET_PAUSED", value: true }));
-                console.log("일시정지 제어 메시지 전송");
+                wsRef.current.send(JSON.stringify({ command: "SET_PAUSED_MIC", value: true }));
+                wsRef.current.send(JSON.stringify({ command: "SET_PAUSED_SYSTEM", value: true }));
+                console.log("일시정지 제어 메시지 전송 (채널별 + 글로벌)");
+            }
+
+            // AudioWorklet에 채널별 일시정지 알림
+            if (stereoNodeRef.current) {
+                stereoNodeRef.current.port.postMessage({ type: 'setPausedMic', value: true });
+                stereoNodeRef.current.port.postMessage({ type: 'setPausedSystem', value: true });
+                console.log("Worklet에 채널별 일시정지 메시지 전송");
             }
 
             vadPause();
@@ -825,10 +834,19 @@ const useRealtimeStream = (): RealtimeStreamControls => {
 
         console.log("녹음 재개");
         try {
-            // 백엔드에 재개 상태 알림
+            // 백엔드에 재개 상태 알림 (채널별 + 글로벌)
             if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                 wsRef.current.send(JSON.stringify({ command: "SET_PAUSED", value: false }));
-                console.log("재개 제어 메시지 전송");
+                wsRef.current.send(JSON.stringify({ command: "SET_PAUSED_MIC", value: false }));
+                wsRef.current.send(JSON.stringify({ command: "SET_PAUSED_SYSTEM", value: false }));
+                console.log("재개 제어 메시지 전송 (채널별 + 글로벌)");
+            }
+
+            // AudioWorklet에 채널별 재개 알림
+            if (stereoNodeRef.current) {
+                stereoNodeRef.current.port.postMessage({ type: 'setPausedMic', value: false });
+                stereoNodeRef.current.port.postMessage({ type: 'setPausedSystem', value: false });
+                console.log("Worklet에 채널별 재개 메시지 전송");
             }
 
             vadStart();
