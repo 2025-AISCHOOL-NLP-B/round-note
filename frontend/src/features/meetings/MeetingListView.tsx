@@ -1,8 +1,10 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo } from 'react';
 import { Card, CardContent } from '@/shared/ui/card';
 import { Button } from '@/shared/ui/button';
 import { Badge } from '@/shared/ui/badge';
+import { Checkbox } from '@/shared/ui/checkbox';
 import { Input } from '@/shared/ui/input';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/shared/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
 import { Calendar, CheckCircle2, Circle, Eye, Search, Filter, Trash2 } from 'lucide-react';
 import { MeetingDetail } from '@/features/meetings/MeetingDetail';
@@ -22,6 +24,26 @@ export function MeetingListView({ meetings, onUpdateMeeting, onDeleteMeeting }: 
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'completed' | 'pending'>('all');
   const [sortBy, setSortBy] = useState<'date' | 'title' | 'progress'>('date');
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
+
+  const handleBulkDelete = () => {
+    if (selectedIds.length === 0) return;
+
+    if (confirm(`${selectedIds.length}개의 회의록을 삭제하시겠습니까?`)) {
+      selectedIds.forEach(id => onDeleteMeeting(id));
+      setSelectedIds([]);
+      setIsSelectionMode(false);
+    }
+  };
+
+  const handleDeleteAll = () => {
+    if (meetings.length === 0) return;
+
+    meetings.forEach(meeting => onDeleteMeeting(meeting.id));
+    setShowDeleteAllConfirm(false);
+  };
 
   const filteredAndSortedMeetings = useMemo(() => {
     let filtered = meetings;
@@ -142,6 +164,77 @@ export function MeetingListView({ meetings, onUpdateMeeting, onDeleteMeeting }: 
           </CardContent>
         </Card>
 
+        {/* 삭제 기능 버튼 */}
+        <div className="mt-4 flex items-center justify-between border-t pt-4">
+          <div className="flex items-center gap-2">
+            {isSelectionMode && (
+              <>
+                <Checkbox
+                  checked={selectedIds.length === filteredAndSortedMeetings.length && filteredAndSortedMeetings.length > 0}
+                  onCheckedChange={(checked) => {
+                    if (checked) {
+                      setSelectedIds(filteredAndSortedMeetings.map(m => m.id));
+                    } else {
+                      setSelectedIds([]);
+                    }
+                  }}
+                />
+                <span className="text-sm text-gray-600">
+                  {selectedIds.length > 0 ? `${selectedIds.length}개 선택됨` : '전체 선택'}
+                </span>
+              </>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {isSelectionMode ? (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setIsSelectionMode(false);
+                    setSelectedIds([]);
+                  }}
+                >
+                  취소
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleBulkDelete}
+                  disabled={selectedIds.length === 0}
+                  className="gap-2"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  선택 삭제 ({selectedIds.length})
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsSelectionMode(true)}
+                  className="gap-2"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  선택 삭제
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowDeleteAllConfirm(true)}
+                  className="gap-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  전체 삭제
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+
       </div>
 
       {/* Meetings Grid */}
@@ -165,28 +258,52 @@ export function MeetingListView({ meetings, onUpdateMeeting, onDeleteMeeting }: 
 
             return (
               <Card key={meeting.id} className="hover:shadow-lg transition-shadow cursor-pointer">
-                <CardContent className="pt-6" onClick={() => setSelectedMeeting(meeting)}>
+                <CardContent
+                  className="pt-6"
+                  onClick={() => {
+                    // 선택 모드일 때는 카드 클릭 시 체크박스 토글
+                    if (isSelectionMode) {
+                      if (selectedIds.includes(meeting.id)) {
+                        setSelectedIds(selectedIds.filter(id => id !== meeting.id));
+                      } else {
+                        setSelectedIds([...selectedIds, meeting.id]);
+                      }
+                    } else {
+                      // 일반 모드일 때는 상세 보기
+                      setSelectedMeeting(meeting);
+                    }
+                  }}
+                >
                   <div className="space-y-4">
-                    {/* Header: title + delete */}
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <h3 className="mb-2 line-clamp-2">{meeting.title}</h3>
+                    {/* Header: title + checkbox */}
+                    <div className="flex items-start gap-3">
+                      {/* 선택 모드일 때 체크박스 표시 */}
+                      {isSelectionMode && (
+                        <Checkbox
+                          checked={selectedIds.includes(meeting.id)}
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              setSelectedIds([...selectedIds, meeting.id]);
+                            } else {
+                              setSelectedIds(selectedIds.filter(id => id !== meeting.id));
+                            }
+                          }}
+                          className="mt-1"
+                          onClick={(e) => e.stopPropagation()} // 카드 클릭 이벤트 전파 방지
+                        />
+                      )}
+
+                      <div className="flex-1">
+                        <h3 className="mb-2 line-clamp-1">{meeting.title}</h3>
                         <div className="flex items-center gap-2 text-sm text-gray-600">
                           <Calendar className="w-3 h-3" />
                           <span>{meeting.date}</span>
                         </div>
                       </div>
-                      <div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={(e) => { e.stopPropagation(); onDeleteMeeting(meeting.id); }}
-                          className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
+
+                      {/* ❌ 개별 삭제 버튼 제거됨 */}
                     </div>
+
                     {/* Participants (show only if exists) */}
                     {meeting.participants && meeting.participants.length > 0 ? (
                       <p className="text-sm text-gray-600 line-clamp-2">
@@ -243,6 +360,32 @@ export function MeetingListView({ meetings, onUpdateMeeting, onDeleteMeeting }: 
           })}
         </div>
       )}
+
+      <Dialog open={showDeleteAllConfirm} onOpenChange={setShowDeleteAllConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>전체 삭제 확인</DialogTitle>
+            <DialogDescription>
+              모든 회의록({meetings.length}개)을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button
+              variant="outline"
+              onClick={() => setShowDeleteAllConfirm(false)}
+            >
+              취소
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteAll}
+            >
+              전체 삭제
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <ScrollToTop />
     </div>
   );
