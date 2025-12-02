@@ -3,13 +3,14 @@ import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import { Textarea } from '@/shared/ui/textarea';
-import { Calendar, Save, Target, Users } from 'lucide-react';
+import { Card } from '@/shared/ui/card';
+import { Calendar, Save, Target, Users, Sparkles } from 'lucide-react';
 import type { Meeting } from '@/features/dashboard/Dashboard';
 
 interface MeetingInfoInputProps {
   initialInfo: { title: string; date: string; purpose?: string; participants?: string };
   meetings: Meeting[];
-  onComplete: (info: { title: string; date: string; purpose: string; participants: string[] }) => void;
+  onComplete: (info: { title: string; date: string; purpose: string; participants: string[] }) => void | Promise<void>;
 }
 
 export function MeetingInfoInput({ initialInfo, meetings, onComplete }: MeetingInfoInputProps) {
@@ -17,9 +18,11 @@ export function MeetingInfoInput({ initialInfo, meetings, onComplete }: MeetingI
   const [date, setDate] = useState(initialInfo.date);
   const [purpose, setPurpose] = useState(initialInfo.purpose || '');
   const [participants, setParticipants] = useState(initialInfo.participants || '');
+  const [isProcessing, setIsProcessing] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsProcessing(true);
 
     let finalTitle = title.trim();
 
@@ -41,16 +44,43 @@ export function MeetingInfoInput({ initialInfo, meetings, onComplete }: MeetingI
       .map(p => p.trim())
       .filter(p => p.length > 0);
 
-    onComplete({
-      title: finalTitle,
-      date,
-      purpose: purpose.trim(),
-      participants: participantsList
-    });
+    try {
+      // 약간의 딜레이를 주어 로딩 UI가 보이도록 함 (선택)
+      await new Promise(resolve => setTimeout(resolve, 150));
+
+      await Promise.resolve(
+        onComplete({
+          title: finalTitle,
+          date,
+          purpose: purpose.trim(),
+          participants: participantsList,
+        })
+      );
+    } finally {
+      // 부모 저장 완료까지 기다린 뒤 로딩 종료
+      setIsProcessing(false);
+    }
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <>
+      {/* 로딩 오버레이 */}
+      {isProcessing && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
+          <Card className="p-8 bg-white shadow-2xl">
+            <div className="flex flex-col items-center gap-4">
+              <Sparkles className="w-12 h-12 text-primary animate-spin" />
+              <div className="text-center">
+                <h3 className="text-lg font-semibold text-slate-800 mb-2">회의록 저장 중...</h3>
+                <p className="text-sm text-slate-600">회의 정보를 최종 저장하고 있습니다.</p>
+                <p className="text-xs text-slate-500 mt-2">잠시만 기다려주세요.</p>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-6">
       <div className="space-y-4">
         <div className="space-y-2">
           <Label htmlFor="title">회의 제목</Label>
@@ -59,6 +89,7 @@ export function MeetingInfoInput({ initialInfo, meetings, onComplete }: MeetingI
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="예: 2025년 1분기 마케팅 전략 회의 (미입력 시 자동 생성)"
+            disabled={isProcessing}
           />
           <p className="text-xs text-gray-500">
             * 입력하지 않으면 날짜 기반으로 자동 생성됩니다
@@ -76,6 +107,7 @@ export function MeetingInfoInput({ initialInfo, meetings, onComplete }: MeetingI
             onChange={(e) => setPurpose(e.target.value)}
             placeholder="예: 신규 서비스 런칭 전략 수립 및 일정 확정"
             className="min-h-[80px] resize-none"
+            disabled={isProcessing}
           />
         </div>
 
@@ -90,6 +122,7 @@ export function MeetingInfoInput({ initialInfo, meetings, onComplete }: MeetingI
             value={date}
             onChange={(e) => setDate(e.target.value)}
             required
+            disabled={isProcessing}
           />
         </div>
 
@@ -102,7 +135,8 @@ export function MeetingInfoInput({ initialInfo, meetings, onComplete }: MeetingI
             id="participants"
             value={participants}
             onChange={(e) => setParticipants(e.target.value)}
-            placeholder="예: 김철수, 이영희, 박지민 (쉼표로 구분)"
+            placeholder="예: 김철수, 이영희, 박지민 (쉰표로 구분)"
+            disabled={isProcessing}
           />
         </div>
       </div>
@@ -115,11 +149,21 @@ export function MeetingInfoInput({ initialInfo, meetings, onComplete }: MeetingI
       </div>
 
       <div className="flex justify-end">
-        <Button type="submit" size="lg" className="gap-2">
-          <Save className="w-4 h-4" />
-          저장
+        <Button type="submit" size="lg" className="gap-2" disabled={isProcessing}>
+          {isProcessing ? (
+            <>
+              <Sparkles className="w-4 h-4 animate-spin" />
+              저장 중...
+            </>
+          ) : (
+            <>
+              <Save className="w-4 h-4" />
+              저장
+            </>
+          )}
         </Button>
       </div>
     </form>
+    </>
   );
 }
