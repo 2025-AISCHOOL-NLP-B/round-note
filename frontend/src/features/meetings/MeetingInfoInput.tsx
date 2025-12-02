@@ -4,6 +4,7 @@ import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import { Textarea } from '@/shared/ui/textarea';
 import { Card } from '@/shared/ui/card';
+import ProcessingOverlay from '@/shared/ui/processing-overlay';
 import { Calendar, Save, Target, Users, Sparkles } from 'lucide-react';
 import type { Meeting } from '@/features/dashboard/Dashboard';
 
@@ -65,20 +66,12 @@ export function MeetingInfoInput({ initialInfo, meetings, onComplete }: MeetingI
   return (
     <>
       {/* 로딩 오버레이 */}
-      {isProcessing && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
-          <Card className="p-8 bg-white shadow-2xl">
-            <div className="flex flex-col items-center gap-4">
-              <Sparkles className="w-12 h-12 text-primary animate-spin" />
-              <div className="text-center">
-                <h3 className="text-lg font-semibold text-slate-800 mb-2">회의록 저장 중...</h3>
-                <p className="text-sm text-slate-600">회의 정보를 최종 저장하고 있습니다.</p>
-                <p className="text-xs text-slate-500 mt-2">잠시만 기다려주세요.</p>
-              </div>
-            </div>
-          </Card>
-        </div>
-      )}
+      <ProcessingOverlay
+        open={isProcessing}
+        title="회의록 저장 중..."
+        message="회의 정보를 최종 저장하고 있습니다."
+        subMessage="잠시만 기다려주세요."
+      />
 
       <form onSubmit={handleSubmit} className="space-y-6">
       <div className="space-y-4">
