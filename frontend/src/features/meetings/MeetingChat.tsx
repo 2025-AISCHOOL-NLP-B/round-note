@@ -409,7 +409,7 @@ export default function MeetingChat({ meeting, open, onOpen, onClose }: { meetin
         <div className="p-3 border-t">
           <div className="flex gap-2">
             <Input value={input} onChange={(e) => setInput(e.target.value)} placeholder="회의에 대해 질문해보세요..." />
-            <Button onClick={send}>전송</Button>
+            <Button onClick={() => send()}>전송</Button>
           </div>
         </div>
       </div>

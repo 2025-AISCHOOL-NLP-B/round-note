@@ -548,7 +548,7 @@ export function MeetingChatbotPage({ meetings }: MeetingChatbotPageProps) {
                                     disabled={activeChats.length === 0}
                                 />
                                 <Button
-                                    onClick={handleSend}
+                                    onClick={() => handleSend()}
                                     disabled={!input.trim() || isTyping || activeChats.length === 0}
                                 >
                                     <Send className="w-4 h-4" />
