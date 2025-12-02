@@ -107,9 +107,6 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
   const [speechSupported, setSpeechSupported] = useState(true);
   const [micPermissionDenied, setMicPermissionDenied] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [aiAnalysis, setAiAnalysis] = useState<any>(null);
-  const [analysisError, setAnalysisError] = useState<string>('');
   const [recordingTime, setRecordingTime] = useState(0);
   const [inputLanguage, setInputLanguage] = useState('ko-KR');
   const [outputLanguage, setOutputLanguage] = useState('ko-KR');
@@ -299,7 +296,7 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
   const stopAudioRecording = () => {
     if (audioRecordingRef.current && audioRecordingRef.current.state !== 'inactive') {
       audioRecordingRef.current.pause();
-      toast.info('오디오 녹음이 일시 중지되었습니다.');
+      toast.info('오디오 녹음이 종료되었습니다.');
     }
   };
 
@@ -332,9 +329,10 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
 
   const toggleRecording = async () => {
     if (isRecording) {
+      setIsProcessing(true);
       stopRecording();
       stopAudioRecording();
-      // End meeting and save
+      // 회의 종료 및 저장 후 redirect
       await handleSubmit();
     } else {
       try {
@@ -353,7 +351,6 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
         await startRecording(createdMeetingId, localParticipants);
         startAudioRecording();
         setRecordingTime(0);
-        toast.success('녹음이 시작되었습니다.');
       } catch (error) {
         console.error('Recording error:', error);
         setMicPermissionDenied(true);
@@ -363,89 +360,7 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
     }
   };
 
-  const handleAIAnalysis = async () => {
-    if (!content.trim()) {
-      toast.error('분석할 회의 내용을 먼저 입력해주세요.');
-      return;
-    }
 
-    if (!currentMeetingId) {
-      toast.error('회의를 먼저 시작해주세요.');
-      return;
-    }
-
-    setIsAnalyzing(true);
-    setAnalysisError('');
-
-    const maxRetries = 3;
-    let retryCount = 0;
-
-    const performAnalysis = async (): Promise<void> => {
-      try {
-        // 백엔드에 회의 내용 업데이트
-        await fetchWithAuth(`${API_URL}/api/v1/meetings/${currentMeetingId}`, {
-          method: 'PUT',
-          body: JSON.stringify({ content }),
-        });
-
-        // regenerate를 호출하여 요약 + 액션 아이템 생성
-        const regenResponse = await fetchWithAuth(`${API_URL}/api/v1/reports/${currentMeetingId}/regenerate`, {
-          method: 'POST',
-        });
-
-        const result = await regenResponse.json();
-        setAiAnalysis({
-          summary: result.summary,
-          actionItems: result.action_items_count > 0 ? Array(result.action_items_count).fill({ task: '액션 아이템' }) : [],
-        });
-        toast.success('AI 분석이 완료되었습니다!');
-        console.log('AI Analysis result:', result);
-
-      } catch (error: any) {
-        console.error('AI analysis error:', error);
-
-        // 네트워크 오류 vs 인증 오류 구분
-        const isNetworkError = error?.message?.includes('Failed to fetch') || error?.name === 'TypeError';
-        const isTimeoutError = error?.name === 'AbortError';
-        const isAuthError = error?.message?.includes('인증');
-
-        // 인증 오류는 재시도하지 않음
-        if (isAuthError) {
-          setAnalysisError('인증이 필요합니다. 다시 로그인해주세요.');
-          toast.error('세션이 만료되었습니다. 다시 로그인해주세요.');
-          throw error;
-        }
-
-        // 네트워크 오류는 재시도
-        if ((isNetworkError || isTimeoutError) && retryCount < maxRetries) {
-          retryCount++;
-          console.log(`Retrying analysis (${retryCount}/${maxRetries})...`);
-          toast.info(`네트워크 오류. ${retryCount}번째 재시도 중... (${retryCount}/${maxRetries})`);
-          
-          // 지수 백오프: 1초, 2초, 4초
-          await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount - 1) * 1000));
-          return performAnalysis();
-        }
-
-        // 최대 재시도 횟수 초과 또는 다른 오류
-        const msg = isTimeoutError 
-          ? '분석 요청 시간이 초과되었습니다.' 
-          : (isNetworkError 
-            ? '네트워크 연결을 확인해주세요.'
-            : (error?.message || 'AI 분석 중 오류가 발생했습니다.'));
-        
-        setAnalysisError(msg);
-        toast.error(msg);
-        throw error;
-      }
-    };
-
-    try {
-      await performAnalysis();
-    } finally {
-      setIsAnalyzing(false);
-    }
-  };
 
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -463,12 +378,6 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
 
     // Finalize audio recording and get Blob
     const recordedAudioBlob = await finalizeAudioRecording();
-
-    // Add audio Blob to analysis
-    const analysisWithAudio = {
-      ...aiAnalysis,
-      audioBlob: recordedAudioBlob // Blob을 전달
-    };
 
     // 백엔드에 전사 내용 저장 후 요약 재생성 호출
     try {
@@ -493,9 +402,7 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
         
         // 3) 요약 재생성 (템플릿 적용)
         const regen = await regenerateSummary(currentMeetingId, templateData);
-        // 3) UI 반영
-        setAiAnalysis({ summary: regen.summary, actionItems: regen.action_items_count });
-        toast.success('회의록이 저장되고 AI 요약이 생성되었습니다.');
+        toast.success('회의록이 저장되었습니다.');
       }
     } catch (err) {
       console.error('Saving content / regenerating summary failed:', err);
@@ -504,7 +411,7 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
 
     // 최종 UI 정리
     setTimeout(() => {
-      onComplete(content, analysisWithAudio, currentMeetingId);
+      onComplete(content, { audioBlob: recordedAudioBlob }, currentMeetingId);
       setContent('');
       // Reset audio chunks for next recording
       audioChunksRef.current = [];
@@ -578,6 +485,21 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50/50 via-slate-50 to-indigo-50/50 pb-8 px-2 md:px-4 pt-4">
+      {/* 로딩 오버레이 */}
+      {isProcessing && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
+          <Card className="p-8 bg-white shadow-2xl">
+            <div className="flex flex-col items-center gap-4">
+              <Sparkles className="w-12 h-12 text-primary animate-spin" />
+              <div className="text-center">
+                <h3 className="text-lg font-semibold text-slate-800 mb-2">회의 종료 중...</h3>
+                <p className="text-sm text-slate-600">회의록을 저장하고 AI 요약을 생성하고 있습니다.</p>
+                <p className="text-xs text-slate-500 mt-2">잠시만 기다려주세요.</p>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
 
       {/* Top Bar with Title and Date */}
       <Card className="mb-4 border-slate-200 shadow-md">
@@ -694,14 +616,19 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
               <div className="mb-4 flex gap-2 justify-center">
                 <Button
                   onClick={toggleRecording}
-                  disabled={!speechSupported || vadLoading}
+                  disabled={!speechSupported || vadLoading || isProcessing}
                   size="lg"
                   className={`flex-1 max-w-md gap-2 ${isRecording
                     ? 'bg-red-500 hover:bg-red-600'
                     : 'bg-primary hover:bg-primary/90'
-                    } ${!speechSupported ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    } ${(!speechSupported || isProcessing) ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
-                  {isRecording ? (
+                  {isProcessing ? (
+                    <>
+                      <Sparkles className="w-5 h-5 animate-spin" />
+                      회의 종료 중...
+                    </>
+                  ) : isRecording ? (
                     <>
                       <StopCircle className="w-5 h-5" />
                       회의 종료
@@ -714,12 +641,13 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
                   )}
                 </Button>
 
-                {isRecording && (
+                {isRecording && !isProcessing && (
                   <Button
                     onClick={isPaused ? resumeRecording : pauseRecording}
                     size="lg"
                     variant="outline"
                     className="gap-2 w-32"
+                    disabled={isProcessing}
                   >
                     {isPaused ? (
                       <>
@@ -735,25 +663,28 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
                   </Button>
                 )}
 
-                <Button
-                  onClick={isSystemAudioShared ? stopSystemAudio : startSystemAudio}
-                  size="lg"
-                  variant={isSystemAudioShared ? "secondary" : "outline"}
-                  className="gap-2"
-                  title="시스템 오디오(화상회의 소리) 공유"
-                >
-                  {isSystemAudioShared ? (
-                    <>
-                      <MonitorOff className="w-5 h-5" />
-                      <span className="hidden sm:inline">시스템 소리 끄기</span>
-                    </>
-                  ) : (
-                    <>
-                      <Monitor className="w-5 h-5" />
-                      <span className="hidden sm:inline">시스템 소리 공유</span>
-                    </>
-                  )}
-                </Button>
+                {!isProcessing && (
+                  <Button
+                    onClick={isSystemAudioShared ? stopSystemAudio : startSystemAudio}
+                    size="lg"
+                    variant={isSystemAudioShared ? "secondary" : "outline"}
+                    className="gap-2"
+                    title="시스템 오디오(화상회의 소리) 공유"
+                    disabled={isProcessing}
+                  >
+                    {isSystemAudioShared ? (
+                      <>
+                        <MonitorOff className="w-5 h-5" />
+                        <span className="hidden sm:inline">시스템 소리 끄기</span>
+                      </>
+                    ) : (
+                      <>
+                        <Monitor className="w-5 h-5" />
+                        <span className="hidden sm:inline">시스템 소리 공유</span>
+                      </>
+                    )}
+                  </Button>
+                )}
               </div>
 
               {/* 전사 내용 표시 영역 - 타임라인 스타일 */}
@@ -843,17 +774,22 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
               <div className="mb-4 flex gap-2 justify-center">
                 <Button
                   onClick={toggleRecording}
-                  disabled={!speechSupported || vadLoading}
+                  disabled={!speechSupported || vadLoading || isProcessing}
                   size="lg"
                   className={`flex-1 max-w-md gap-2 ${isRecording
                     ? 'bg-red-500 hover:bg-red-600'
                     : 'bg-primary hover:bg-primary/90'
-                    } ${!speechSupported ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    } ${(!speechSupported || isProcessing) ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
-                  {isRecording ? (
+                  {isProcessing ? (
+                    <>
+                      <Sparkles className="w-5 h-5 animate-spin" />
+                      회의 종료 중...
+                    </>
+                  ) : isRecording ? (
                     <>
                       <StopCircle className="w-5 h-5" />
-                      녹취 중지
+                      회의 종료
                     </>
                   ) : (
                     <>
@@ -863,12 +799,13 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
                   )}
                 </Button>
 
-                {isRecording && (
+                {isRecording && !isProcessing && (
                   <Button
                     onClick={isPaused ? resumeRecording : pauseRecording}
                     size="lg"
                     variant="outline"
                     className="gap-2 w-32"
+                    disabled={isProcessing}
                   >
                     {isPaused ? (
                       <>
@@ -884,25 +821,28 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
                   </Button>
                 )}
 
-                <Button
-                  onClick={isSystemAudioShared ? stopSystemAudio : startSystemAudio}
-                  size="lg"
-                  variant={isSystemAudioShared ? "secondary" : "outline"}
-                  className="gap-2"
-                  title="시스템 오디오(화상회의 소리) 공유"
-                >
-                  {isSystemAudioShared ? (
-                    <>
-                      <MonitorOff className="w-5 h-5" />
-                      <span className="hidden sm:inline">시스템 소리 끄기</span>
-                    </>
-                  ) : (
-                    <>
-                      <Monitor className="w-5 h-5" />
-                      <span className="hidden sm:inline">시스템 소리 공유</span>
-                    </>
-                  )}
-                </Button>
+                {!isProcessing && (
+                  <Button
+                    onClick={isSystemAudioShared ? stopSystemAudio : startSystemAudio}
+                    size="lg"
+                    variant={isSystemAudioShared ? "secondary" : "outline"}
+                    className="gap-2"
+                    title="시스템 오디오(화상회의 소리) 공유"
+                    disabled={isProcessing}
+                  >
+                    {isSystemAudioShared ? (
+                      <>
+                        <MonitorOff className="w-5 h-5" />
+                        <span className="hidden sm:inline">시스템 소리 끄기</span>
+                      </>
+                    ) : (
+                      <>
+                        <Monitor className="w-5 h-5" />
+                        <span className="hidden sm:inline">시스템 소리 공유</span>
+                      </>
+                    )}
+                  </Button>
+                )}
               </div>
 
               {/* 요약 내용 표시 영역 - 고정 높이 + 스크롤 */}
@@ -982,70 +922,7 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
         </Alert>
       )}
 
-      {/* AI Analysis Prompt */}
-      {content && !aiAnalysis && (
-        <Card className="mb-4 border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50">
-          <CardContent className="p-4">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-              <div className="flex items-start gap-2">
-                <Brain className="w-5 h-5 text-primary shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-sm font-medium text-slate-800">AI 분석 준비 완료</p>
-                  <p className="text-xs text-slate-600">회의 내용을 분석하여 요약과 액션 아이템을 추출합니다</p>
-                </div>
-              </div>
-              <Button
-                onClick={handleAIAnalysis}
-                disabled={isAnalyzing}
-                className="gap-2 shrink-0 w-full sm:w-auto bg-primary hover:bg-primary/90"
-                size="sm"
-              >
-                {isAnalyzing ? (
-                  <>
-                    <Wand2 className="w-4 h-4 animate-spin" />
-                    분석 중...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4" />
-                    AI 분석 시작
-                  </>
-                )}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
-      {/* AI Analysis Results */}
-      {aiAnalysis && (
-        <Card className="mb-4 border-green-200 bg-gradient-to-r from-green-50 to-emerald-50">
-          <CardHeader className="pb-3">
-            <div className="flex items-center gap-2">
-              <Check className="w-5 h-5 text-green-600" />
-              <CardTitle className="text-base text-green-800">AI 분석 완료</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {aiAnalysis.summary && (
-              <div>
-                <h4 className="font-semibold text-green-800 mb-1">요약</h4>
-                <p className="text-green-700 text-sm whitespace-pre-wrap">{aiAnalysis.summary}</p>
-              </div>
-            )}
-            {aiAnalysis.actionItems && aiAnalysis.actionItems.length > 0 && (
-              <div>
-                <h4 className="font-semibold text-green-800 mb-1">액션 아이템</h4>
-                <ul className="list-disc list-inside text-green-700 text-sm">
-                  {aiAnalysis.actionItems.map((item: any, i: number) => (
-                    <li key={i}>{typeof item === 'string' ? item : (item.task || item.title || item.text || '')}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }
