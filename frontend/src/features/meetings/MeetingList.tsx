@@ -25,6 +25,25 @@ export function MeetingList({ meetings, onUpdateMeeting, onDeleteMeeting }: Meet
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'completed' | 'pending'>('all');
   const [sortBy, setSortBy] = useState<'date' | 'title' | 'progress'>('date');
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
+
+  const handleBulkDelete = () => {
+    if (selectedIds.length === 0) return;
+
+    if (confirm(`${selectedIds.length}개의 회의록을 삭제하시겠습니까?`)) {
+      selectedIds.forEach(id => onDeleteMeeting(id));
+      setSelectedIds([]);
+      setIsSelectionMode(false);
+    }
+  };
+  const handleDeleteAll = () => {
+    if (meetings.length === 0) return;
+
+    meetings.forEach(meeting => onDeleteMeeting(meeting.id));
+    setShowDeleteAllConfirm(false);
+  };
 
   const filteredAndSortedMeetings = useMemo(() => {
     let filtered = meetings;
@@ -32,7 +51,7 @@ export function MeetingList({ meetings, onUpdateMeeting, onDeleteMeeting }: Meet
     // Search filter
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(meeting => 
+      filtered = filtered.filter(meeting =>
         meeting.title.toLowerCase().includes(query) ||
         meeting.content.toLowerCase().includes(query) ||
         meeting.summary.toLowerCase().includes(query)
@@ -55,9 +74,9 @@ export function MeetingList({ meetings, onUpdateMeeting, onDeleteMeeting }: Meet
       } else if (sortBy === 'title') {
         return a.title.localeCompare(b.title);
       } else {
-        const progressA = a.actionItems.length === 0 ? 100 : 
+        const progressA = a.actionItems.length === 0 ? 100 :
           (a.actionItems.filter(i => i.completed).length / a.actionItems.length) * 100;
-        const progressB = b.actionItems.length === 0 ? 100 : 
+        const progressB = b.actionItems.length === 0 ? 100 :
           (b.actionItems.filter(i => i.completed).length / b.actionItems.length) * 100;
         return progressB - progressA;
       }
@@ -129,17 +148,17 @@ export function MeetingList({ meetings, onUpdateMeeting, onDeleteMeeting }: Meet
     <>
       <div className="space-y-4">
         {/* Search and Filter Section */}
-        <Card>
+        <Card className="w-full max-w-[1600px] mx-auto">
           <CardContent className="pt-6">
-            <div className="grid gap-4 md:grid-cols-3">
-              <div className="md:col-span-1">
+            <div className="grid gap-4 md:grid-cols-4">
+              <div className="md:col-span-2">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                   <Input
                     placeholder="회의록 검색..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-10"
+                    className="pl-10 w-full"
                   />
                 </div>
               </div>
@@ -180,6 +199,77 @@ export function MeetingList({ meetings, onUpdateMeeting, onDeleteMeeting }: Meet
           </CardContent>
         </Card>
 
+        {/* 삭제 기능 버튼 */}
+        <div className="mt-4 flex items-center justify-between border-t pt-4">
+          <div className="flex items-center gap-2">
+            {isSelectionMode && (
+              <>
+                <Checkbox
+                  checked={selectedIds.length === filteredAndSortedMeetings.length && filteredAndSortedMeetings.length > 0}
+                  onCheckedChange={(checked) => {
+                    if (checked) {
+                      setSelectedIds(filteredAndSortedMeetings.map(m => m.id));
+                    } else {
+                      setSelectedIds([]);
+                    }
+                  }}
+                />
+                <span className="text-sm text-gray-600">
+                  {selectedIds.length > 0 ? `${selectedIds.length}개 선택됨` : '전체 선택'}
+                </span>
+              </>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {isSelectionMode ? (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setIsSelectionMode(false);
+                    setSelectedIds([]);
+                  }}
+                >
+                  취소
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleBulkDelete}
+                  disabled={selectedIds.length === 0}
+                  className="gap-2"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  선택 삭제 ({selectedIds.length})
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsSelectionMode(true)}
+                  className="gap-2"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  선택 삭제
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowDeleteAllConfirm(true)}
+                  className="gap-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  전체 삭제
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+
         {/* Meetings Grid */}
         {filteredAndSortedMeetings.length === 0 ? (
           <Card>
@@ -195,30 +285,55 @@ export function MeetingList({ meetings, onUpdateMeeting, onDeleteMeeting }: Meet
               const completedCount = meeting.actionItems.filter(item => item.completed).length;
 
               return (
-                <Card key={meeting.id} className="hover:shadow-lg transition-shadow">
-                  <CardHeader>
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <CardTitle className="line-clamp-1">{meeting.title}</CardTitle>
-                        <CardDescription className="flex items-center gap-1 mt-1">
-                          <Calendar className="w-3 h-3" />
-                          {meeting.date}
-                        </CardDescription>
+                <Card key={meeting.id} className="hover:shadow-lg transition-shadow cursor-pointer">
+                  <CardContent
+                    className="pt-6"
+                    onClick={() => {
+                      // 선택 모드일 때는 카드 클릭 시 체크박스 토글
+                      if (isSelectionMode) {
+                        if (selectedIds.includes(meeting.id)) {
+                          setSelectedIds(selectedIds.filter(id => id !== meeting.id));
+                        } else {
+                          setSelectedIds([...selectedIds, meeting.id]);
+                        }
+                      } else {
+                        // 일반 모드일 때는 상세 보기
+                        setSelectedMeeting(meeting);
+                      }
+                    }}
+                  >
+                    <div className="space-y-4">
+                      {/* Header: title + checkbox */}
+                      <div className="flex items-start gap-3">
+                        {/* 선택 모드일 때 체크박스 표시 */}
+                        {isSelectionMode && (
+                          <Checkbox
+                            checked={selectedIds.includes(meeting.id)}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setSelectedIds([...selectedIds, meeting.id]);
+                              } else {
+                                setSelectedIds(selectedIds.filter(id => id !== meeting.id));
+                              }
+                            }}
+                            className="mt-1"
+                            onClick={(e) => e.stopPropagation()} // 카드 클릭 이벤트 전파 방지
+                          />
+                        )}
+
+                        <div className="flex-1">
+                          <h3 className="mb-2 line-clamp-2">{meeting.title}</h3>
+                          <div className="flex items-center gap-2 text-sm text-gray-600">
+                            <Calendar className="w-3 h-3" />
+                            <span>{meeting.date}</span>
+                          </div>
+                        </div>
+
+                        {/* ❌ 개별 삭제 버튼 제거됨 */}
                       </div>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => onDeleteMeeting(meeting.id)}
-                        className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
                     </div>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div>
-                      <p className="text-sm text-gray-600 line-clamp-3">{meeting.summary}</p>
-                    </div>
+
+                    {/* ... 나머지 내용 (참여자, 액션 아이템 등) ... */}
 
                     <div className="space-y-2">
                       <div className="flex items-center justify-between text-sm">
@@ -250,6 +365,7 @@ export function MeetingList({ meetings, onUpdateMeeting, onDeleteMeeting }: Meet
           </div>
         )}
       </div>
+
 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
@@ -326,7 +442,7 @@ export function MeetingList({ meetings, onUpdateMeeting, onDeleteMeeting }: Meet
                     <h3 className="mb-3 flex items-center gap-2 text-green-600">
                       액션 아이템 ({selectedMeeting.actionItems.length})
                     </h3>
-                    
+
                     {selectedMeeting.actionItems.length === 0 ? (
                       <Card>
                         <CardContent className="py-8 text-center text-gray-500">
@@ -399,6 +515,30 @@ export function MeetingList({ meetings, onUpdateMeeting, onDeleteMeeting }: Meet
               </Tabs>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+      <Dialog open={showDeleteAllConfirm} onOpenChange={setShowDeleteAllConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>전체 삭제 확인</DialogTitle>
+            <DialogDescription>
+              모든 회의록({meetings.length}개)을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button
+              variant="outline"
+              onClick={() => setShowDeleteAllConfirm(false)}
+            >
+              취소
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteAll}
+            >
+              전체 삭제
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </>
