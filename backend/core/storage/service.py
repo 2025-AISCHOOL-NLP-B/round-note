@@ -48,7 +48,7 @@ class StorageService:
 
 
     # 로컬 파일 생성 및 wave.open 관리를 책임집니다.
-    def create_local_wave_file(self, meeting_id: str = None, channels: int = 2, sample_rate: int = 16000) -> tuple[wave.Wave_write, str]:
+    def create_local_wave_file(self, meeting_id: str = None) -> tuple[wave.Wave_write, str]:
         """로컬 오디오 파일을 생성하고 파일 핸들(wave.Wave_write)과 경로를 반환합니다."""
         if meeting_id is None:
             meeting_id = str(ulid.new())
@@ -57,35 +57,16 @@ class StorageService:
         file_path = os.path.join(self.local_storage_path, f"{meeting_id}.wav")
         
         wave_file = wave.open(file_path, 'wb')
-        # 프론트엔드에서 전송된 채널 수와 샘플레이트에 맞춰 동적 설정
-        wave_file.setnchannels(channels)
+        # [Change] 프론트엔드에서 항상 Stereo(2ch) 데이터를 보내므로 파일도 2채널로 설정
+        wave_file.setnchannels(2)
         wave_file.setsampwidth(2)
-        wave_file.setframerate(sample_rate)
-        logging.info(f"로컬 오디오 저장 시작: {file_path} (Channels: {channels}, Rate: {sample_rate}Hz)")
+        wave_file.setframerate(16000)
+        logging.info(f"로컬 오디오 저장 시작: {file_path} (Channels: 2, Rate: 16000)")
         return wave_file, file_path
 
     # 동기 함수인 writeframes를 to_thread로 감싸는 헬퍼 함수
     async def write_audio_chunk(self, wave_file: wave.Wave_write, audio_data: bytes):
         """오디오 청크를 파일에 비동기로 기록합니다."""
-        import struct
-        
-        file_channels = wave_file.getnchannels()
-        data_length = len(audio_data)
-        
-        # 첫 청크에서만 디버그 로그
-        if not hasattr(self, '_first_chunk_logged'):
-            self._first_chunk_logged = True
-            logging.info(f"[StorageService] 오디오 스트리밍 시작 - 채널: {file_channels}, 청크크기: {data_length}bytes")
-        
-        # Mono 파일: 데이터를 그대로 저장 (변환 없음)
-        # Stereo 파일: 데이터를 그대로 저장 (변환 없음)
-        # 프론트엔드가 올바른 형식으로 전송한다고 가정
-        if file_channels == 2:
-            # Stereo 파일이면 변환 없이 그대로 저장
-            if not hasattr(self, '_stereo_file_logged'):
-                self._stereo_file_logged = True
-                logging.info(f"[StorageService] Stereo 파일 - 변환 없이 저장. 데이터크기: {data_length}bytes")
-                
         await asyncio.to_thread(wave_file.writeframes, audio_data)
 
     # wave.close() 역시 비동기로 처리
