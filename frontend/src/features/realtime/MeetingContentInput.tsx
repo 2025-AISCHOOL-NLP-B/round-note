@@ -244,7 +244,7 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
         signal: controller.signal as AbortSignal,
       });
       clearTimeout(timeout);
-      
+
       const result = await response.json();
       if (result?.summary) {
         setRealtimeSummary(result.summary);
@@ -386,7 +386,7 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
       } else {
         // 1) 회의 종료/내용 저장
         await endMeeting(currentMeetingId, { status: 'COMPLETED', ended_at: new Date().toISOString(), content });
-        
+
         // 2) 현재 선택된 템플릿 가져오기
         const activeTemplate = getActiveTemplate();
         const templateData = activeTemplate ? {
@@ -399,7 +399,7 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
             placeholder: s.placeholder
           }))
         } : undefined;
-        
+
         // 3) 요약 재생성 (템플릿 적용)
         const regen = await regenerateSummary(currentMeetingId, templateData);
         toast.success('회의록이 저장되었습니다.');
@@ -611,7 +611,7 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
                   </p>
                 </div>
               )}
-              
+
               {/* 녹취 컨트롤 버튼 */}
               <div className="mb-4 flex gap-2 justify-center">
                 <Button
@@ -694,24 +694,37 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
               >
                 {transcript.length > 0 || partialText ? (
                   <div className="space-y-6">
-                    {transcript.map((segment) => (
-                      <div key={segment.id} className="flex gap-3 animate-in fade-in slide-in-from-bottom-2 duration-500">
-                        <div className="flex flex-col items-center gap-1 min-w-[60px]">
-                          <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600">
-                            <User className="w-4 h-4" />
+                    {transcript.map((segment) => {
+                      const isMic = segment.channelType === 'Mic';
+                      const bgColor = isMic ? 'bg-blue-50' : 'bg-green-50';
+                      const borderColor = isMic ? 'border-blue-200' : 'border-green-200';
+                      const IconComponent = isMic ? Mic : Monitor;
+                      const iconBg = isMic ? 'bg-blue-100' : 'bg-green-100';
+                      const iconColor = isMic ? 'text-blue-600' : 'text-green-600';
+                      const badge = isMic ? '마이크' : '시스템';
+
+                      return (
+                        <div key={segment.id} className="flex gap-3">
+                          <div className="flex flex-col items-center gap-1 min-w-[60px]">
+                            <div className={`w-8 h-8 rounded-full ${iconBg} flex items-center justify-center ${iconColor}`}>
+                              <IconComponent className="w-4 h-4" />
+                            </div>
+                          </div>
+                          <div className="flex-1 space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-semibold text-slate-700">{segment.speaker}</span>
+                              <span className={`text-xs px-1.5 py-0.5 rounded ${isMic ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
+                                {badge}
+                              </span>
+                              <span className="text-xs text-slate-400">{segment.timestamp}</span>
+                            </div>
+                            <div className={`p-3 ${bgColor} rounded-lg rounded-tl-none border ${borderColor} shadow-sm text-slate-700 leading-relaxed`}>
+                              {segment.text}
+                            </div>
                           </div>
                         </div>
-                        <div className="flex-1 space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-semibold text-slate-700">{segment.speaker}</span>
-                            <span className="text-xs text-slate-400">{segment.timestamp}</span>
-                          </div>
-                          <div className="p-3 bg-white rounded-lg rounded-tl-none border border-slate-200 shadow-sm text-slate-700 leading-relaxed">
-                            {segment.text}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
 
                     {/* 실시간 입력 중인 텍스트 표시 */}
                     {partialText && (
