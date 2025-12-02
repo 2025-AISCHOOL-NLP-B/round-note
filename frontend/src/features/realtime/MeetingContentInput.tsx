@@ -66,8 +66,12 @@ import { regenerateSummary } from '@/features/meetings/reportsService';
 import { getActiveTemplate } from '@/features/settings/templateUtils';
 import { fetchWithAuth } from '@/utils/auth';
 import type { Meeting } from "@/features/dashboard/Dashboard";
+import { Switch } from '@/shared/ui/switch';
+import { Video } from 'lucide-react';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+type MeetingMode = 'video-conference' | 'offline' | 'file-upload';
 
 interface MeetingContentInputProps {
   meetingInfo: {
@@ -76,12 +80,13 @@ interface MeetingContentInputProps {
     purpose?: string;
     participants?: string
   };
+  meetingMode: MeetingMode;
   onComplete: (content: string, aiAnalysis?: any, meetingId?: string | null) => void;
   onBack: () => void;
   meetings: Meeting[];
 }
 
-export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings }: MeetingContentInputProps) {
+export function MeetingContentInput({ meetingInfo, meetingMode, onComplete, onBack, meetings }: MeetingContentInputProps) {
   // useRealtimeStream hook 사용
   const {
     isRecording,
@@ -100,6 +105,30 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
     stopSystemAudio,
     isSystemAudioShared,
   } = useRealtimeStream();
+
+  // 화상회의 모드 최초 진입 시 자동으로 시스템 오디오 공유 시도 (한 번만)
+  const autoShareAttemptedRef = useRef(false);
+  useEffect(() => {
+    const autoStartSystemAudio = async () => {
+      // 조건: 화상회의 모드, 아직 공유 안됨, 녹음 시작 전, 최초 시도만
+      if (
+        meetingMode === 'video-conference' &&
+        !isSystemAudioShared &&
+        !isRecording &&
+        !autoShareAttemptedRef.current
+      ) {
+        autoShareAttemptedRef.current = true;
+        try {
+          await startSystemAudio();
+          // 성공/실패는 hook 내부에서 처리; 여기서는 조용히 진행
+        } catch (err) {
+          // 안전 처리: 사용자 취소 시에도 UI 에러 없이 진행
+          console.warn('[AutoShare] System audio auto-start failed:', err);
+        }
+      }
+    };
+    autoStartSystemAudio();
+  }, [meetingMode, isSystemAudioShared, isRecording, startSystemAudio]);
 
   const [content, setContent] = useState('');
   const [editableTitle, setEditableTitle] = useState(meetingInfo.title || '');
@@ -245,7 +274,7 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
         signal: controller.signal as AbortSignal,
       });
       clearTimeout(timeout);
-      
+
       const result = await response.json();
       if (result?.summary) {
         setRealtimeSummary(result.summary);
@@ -352,7 +381,20 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
           toast.error('회의 생성에 실패했습니다. 네트워크 상태를 확인해주세요.');
           return;
         }
-        // 2) 녹음 시작 (meetingId + 참여자 이름을 키워드 부스팅에 전달)
+
+        // 2) 화상회의 모드일 경우 자동으로 시스템 오디오 요청
+        if (meetingMode === 'video-conference' && !isSystemAudioShared) {
+          try {
+            await startSystemAudio();
+            toast.success('시스템 오디오 공유가 시작되었습니다.');
+          } catch (error) {
+            console.warn('System audio sharing declined or failed:', error);
+            toast.warning('시스템 오디오 공유가 취소되었습니다. 마이크만 사용합니다.');
+            // 시스템 오디오 실패해도 녹음은 계속 진행
+          }
+        }
+
+        // 3) 녹음 시작 (meetingId + 참여자 이름을 키워드 부스팅에 전달)
         await startRecording(createdMeetingId, localParticipants);
         startAudioRecording();
         setRecordingTime(0);
@@ -395,7 +437,7 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
       } else {
         // 1) 회의 종료/내용 저장
         await endMeeting(currentMeetingId, { status: 'COMPLETED', ended_at: new Date().toISOString(), content });
-        
+
         // 2) 현재 선택된 템플릿 가져오기
         const activeTemplate = getActiveTemplate();
         const templateData = activeTemplate ? {
@@ -408,7 +450,7 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
             placeholder: s.placeholder
           }))
         } : undefined;
-        
+
         // 3) 요약 재생성 (템플릿 적용)
         const regen = await regenerateSummary(currentMeetingId, templateData);
         toast.success('회의록이 저장되었습니다.');
@@ -514,7 +556,26 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
             />
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground mb-3">
+          {/* 회의 정보 표시 */}
+          {(meetingInfo.purpose || meetingInfo.participants) && (
+            <div className="pt-3 border-t border-slate-200 space-y-2">
+              {meetingInfo.purpose && (
+                <div className="flex items-start gap-2 text-sm">
+                  <span className="text-slate-500 font-medium min-w-[60px]">목적:</span>
+                  <span className="text-slate-700">{meetingInfo.purpose}</span>
+                </div>
+              )}
+              {meetingInfo.participants && (
+                <div className="flex items-start gap-2 text-sm">
+                  <span className="text-slate-500 font-medium min-w-[60px]">참석자:</span>
+                  <span className="text-slate-700">{meetingInfo.participants}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+
+          <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground mt-3">
             <div className="flex items-center gap-1.5">
               <Calendar className="w-3.5 h-3.5 text-primary" />
               <Input
@@ -535,22 +596,23 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
               </Badge>
             )}
           </div>
-
-          {/* 회의 정보 표시 */}
-          {(meetingInfo.purpose || meetingInfo.participants) && (
-            <div className="pt-3 border-t border-slate-200 space-y-2">
-              {meetingInfo.purpose && (
-                <div className="flex items-start gap-2 text-sm">
-                  <span className="text-slate-500 font-medium min-w-[60px]">목적:</span>
-                  <span className="text-slate-700">{meetingInfo.purpose}</span>
-                </div>
-              )}
-              {meetingInfo.participants && (
-                <div className="flex items-start gap-2 text-sm">
-                  <span className="text-slate-500 font-medium min-w-[60px]">참석자:</span>
-                  <span className="text-slate-700">{meetingInfo.participants}</span>
-                </div>
-              )}
+          {/* 참여자 입력 - 전사 창 위, 동일 너비. 녹음 시작 전만 노출 */}
+          {!isRecording && (
+            <div className="pt-3 border-t border-slate-200">
+              <label htmlFor="participants" className="flex items-center gap-2 text-sm font-medium text-slate-700 mb-2">
+                <Users className="w-4 h-4 text-primary" />
+                회의 참여자
+              </label>
+              <Input
+                id="participants"
+                value={localParticipants}
+                onChange={(e) => setLocalParticipants(e.target.value)}
+                placeholder="예: 권현재, 김기찬, 서동현 (쉼표 구분)"
+                className="bg-white border-primary/30 focus-visible:ring-primary focus-visible:border-primary shadow-sm"
+              />
+              <p className="text-xs text-slate-500 mt-1.5 ml-1">
+                참여자 이름을 입력하면 음성 인식률이 향상됩니다
+              </p>
             </div>
           )}
         </CardContent>
@@ -593,26 +655,8 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
           {/* 실시간 전사 탭 */}
           {activeTab === 'transcribe' && (
             <div>
-              {/* 참여자 입력 (녹취 시작 전에만 표시) */}
-              {!isRecording && (
-                <div className="mb-4 max-w-md mx-auto">
-                  <label htmlFor="participants" className="flex items-center gap-2 text-sm font-medium text-slate-700 mb-2">
-                    <Users className="w-4 h-4" />
-                    회의 참여자 (키워드 부스팅)
-                  </label>
-                  <Input
-                    id="participants"
-                    value={localParticipants}
-                    onChange={(e) => setLocalParticipants(e.target.value)}
-                    placeholder="예: 김철수, 이영희, 박민수 (쉼표로 구분)"
-                    className="text-center"
-                  />
-                  <p className="text-xs text-slate-500 mt-1 text-center">
-                    참여자 이름을 입력하면 음성 인식률이 향상됩니다
-                  </p>
-                </div>
-              )}
-              
+              {/* 참여자 입력 (기존 위치 제거됨) */}
+
               {/* 녹취 컨트롤 버튼 */}
               <div className="mb-4 flex gap-2 justify-center">
                 <Button
@@ -664,9 +708,20 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
                   </Button>
                 )}
 
-                {!isProcessing && (
+                {!isProcessing && meetingMode === 'video-conference' && (
                   <Button
-                    onClick={isSystemAudioShared ? stopSystemAudio : startSystemAudio}
+                    onClick={async () => {
+                      try {
+                        if (isSystemAudioShared) {
+                          await Promise.resolve(stopSystemAudio());
+                        } else {
+                          await startSystemAudio();
+                        }
+                      } catch (err) {
+                        // 안전 처리: 예외가 있어도 UI가 깨지지 않도록 함
+                        console.warn('[UI] System audio toggle error:', err);
+                      }
+                    }}
                     size="lg"
                     variant={isSystemAudioShared ? "secondary" : "outline"}
                     className="gap-2"
@@ -822,9 +877,19 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
                   </Button>
                 )}
 
-                {!isProcessing && (
+                {!isProcessing && meetingMode === 'video-conference' && (
                   <Button
-                    onClick={isSystemAudioShared ? stopSystemAudio : startSystemAudio}
+                    onClick={async () => {
+                      try {
+                        if (isSystemAudioShared) {
+                          await Promise.resolve(stopSystemAudio());
+                        } else {
+                          await startSystemAudio();
+                        }
+                      } catch (err) {
+                        console.warn('[UI] System audio toggle error:', err);
+                      }
+                    }}
                     size="lg"
                     variant={isSystemAudioShared ? "secondary" : "outline"}
                     className="gap-2"

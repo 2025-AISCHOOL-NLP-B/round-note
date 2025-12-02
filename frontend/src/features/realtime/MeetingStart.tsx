@@ -5,13 +5,21 @@ import { MeetingContentInput } from './MeetingContentInput';
 import type { Meeting } from '@/features/dashboard/Dashboard';
 import { createMeeting, updateMeeting, endMeeting, type MeetingResponse } from '@/features/meetings/meetingsService';
 import { toast } from 'sonner';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card';
+import { Button } from '@/shared/ui/button';
+import { Switch } from '@/shared/ui/switch';
+import { Label } from '@/shared/ui/label';
+import { Video, Mic, Upload, ArrowRight } from 'lucide-react';
+
+type MeetingMode = 'video-conference' | 'offline' | 'file-upload';
 
 interface MeetingStartProps {
   meetings: Meeting[];
   onAddMeeting: (meeting: Meeting) => void;
+  meetingMode: MeetingMode;
 }
 
-export function MeetingStart({ meetings, onAddMeeting }: MeetingStartProps) {
+export function MeetingStart({ meetings, onAddMeeting, meetingMode }: MeetingStartProps) {
   const [currentStep, setCurrentStep] = useState<'transcribe' | 'info'>('transcribe');
   const router = useRouter();
   const [transcribedContent, setTranscribedContent] = useState('');
@@ -363,8 +371,9 @@ export function MeetingStart({ meetings, onAddMeeting }: MeetingStartProps) {
           purpose: '',
           participants: ''
         }}
+        meetingMode={meetingMode}
         onComplete={handleContentComplete}
-        onBack={() => {}} // 뒤로가기 없음
+        onBack={handleBack}
         meetings={meetings} 
       />
     );

@@ -287,7 +287,7 @@ const useRealtimeStream = (): RealtimeStreamControls => {
             if (!audioTrack) {
                 console.warn("시스템 오디오 트랙을 찾을 수 없습니다. (오디오 공유 체크 확인)");
                 stream.getTracks().forEach(t => t.stop());
-                return;
+                throw new Error('시스템 오디오 트랙을 찾을 수 없습니다.');
             }
 
             systemStreamRef.current = stream;
@@ -336,8 +336,14 @@ const useRealtimeStream = (): RealtimeStreamControls => {
                 stopSystemAudio();
             };
 
-        } catch (e) {
-            console.error("시스템 오디오 공유 시작 오류:", e);
+        } catch (e: any) {
+            // 사용자가 취소했거나 권한을 거부한 경우: 조용히 반환하여 상위에서 처리
+            if (e?.name === 'NotAllowedError' || e?.name === 'AbortError') {
+                console.warn('[SystemAudio] User denied screen/audio share:', e?.message || e);
+                return; // swallow to avoid unhandled errors surfacing in Next.js
+            }
+            console.error('시스템 오디오 공유 시작 오류:', e);
+            return; // Do not rethrow to prevent framework error pages
         }
     }, []);
 

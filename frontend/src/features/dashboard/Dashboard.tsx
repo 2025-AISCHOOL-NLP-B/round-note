@@ -9,6 +9,7 @@ import { TranslationSettings } from "@/features/settings/TranslationSettings";
 import { KeywordSettings } from "@/features/settings/KeywordSettings";
 import { PlatformSettings } from "@/features/settings/PlatformSettings";
 import { Button } from "@/shared/ui/button";
+import { Switch } from "@/shared/ui/switch";
 import { initNotificationChecker } from "@/utils/notificationChecker";
 import {
   Home,
@@ -25,6 +26,9 @@ import {
   ChevronRight,
   ChevronLeft,
   MessageSquare,
+  Video,
+  Mic,
+  Upload,
 } from "lucide-react";
 import { Toaster } from "../../shared/ui/sonner";
 import Image from "next/image";
@@ -62,6 +66,8 @@ export interface Meeting {
   purpose?: string;
 }
 
+type MeetingMode = 'video-conference' | 'offline' | 'file-upload';
+
 export function Dashboard() {
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [activeSection, setActiveSection] = useState(() => {
@@ -71,6 +77,8 @@ export function Dashboard() {
     return "home";
   });
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [showModeSelect, setShowModeSelect] = useState(false);
+  const [meetingMode, setMeetingMode] = useState<MeetingMode>('offline');
 
   // Save activeSection to localStorage whenever it changes
   useEffect(() => {
@@ -179,19 +187,85 @@ export function Dashboard() {
       case "home":
         return (
           <div className="space-y-5">
-            <div className="bg-gradient-to-br from-primary to-blue-700 rounded-2xl p-8 shadow-md text-white w-[1000px] h-[200px]">
+            <div className="bg-gradient-to-br from-primary to-blue-700 rounded-2xl p-8 shadow-md text-white w-[1000px]">
               <h2 className="mb-3 text-white">회의 시작하기</h2>
               <p className="text-white/90 mb-6">
                 실시간 음성 인식으로 회의를 기록하고 자동으로 요약과 액션
                 아이템을 추출하세요
               </p>
-              <Button
-                onClick={() => setActiveSection("start")}
-                size="lg"
-                className="gap-2 bg-white text-primary hover:bg-white/90 shadow-md"
-              >
-                <PlayCircle className="w-5 h-5" />새 회의 시작
-              </Button>
+              
+              {!showModeSelect ? (
+                <Button
+                  onClick={() => setShowModeSelect(true)}
+                  size="lg"
+                  className="gap-2 bg-white text-primary hover:bg-white/90 shadow-md"
+                >
+                  <PlayCircle className="w-5 h-5" />새 회의 시작
+                </Button>
+              ) : (
+                <div className="space-y-3 bg-white rounded-xl p-4">
+                  <div className="text-sm font-semibold text-slate-700 mb-3">회의 모드를 선택하세요</div>
+                  
+                  {/* 화상회의 / 오프라인 토글 */}
+                  <div className="border rounded-lg p-3 bg-slate-50">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        {meetingMode === 'video-conference' ? (
+                          <Video className="w-5 h-5 text-blue-600" />
+                        ) : (
+                          <Mic className="w-5 h-5 text-green-600" />
+                        )}
+                        <div>
+                          <div className="font-medium text-sm text-slate-900">
+                            {meetingMode === 'video-conference' ? '화상 회의 모드' : '오프라인 회의 모드'}
+                          </div>
+                          <div className="text-xs text-slate-600">
+                            {meetingMode === 'video-conference'
+                              ? '시스템 오디오 + 마이크'
+                              : '마이크만 사용'}
+                          </div>
+                        </div>
+                      </div>
+                      <Switch
+                        checked={meetingMode === 'video-conference'}
+                        onCheckedChange={(checked) => setMeetingMode(checked ? 'video-conference' : 'offline')}
+                      />
+                    </div>
+                  </div>
+
+                  {/* 파일 업로드 모드 */}
+                  <div className="border rounded-lg p-3 bg-slate-100 opacity-60">
+                    <div className="flex items-center gap-2">
+                      <Upload className="w-4 h-4 text-slate-400" />
+                      <div>
+                        <div className="font-medium text-xs text-slate-500">파일 업로드 모드</div>
+                        <div className="text-xs text-slate-400">준비 중</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2 pt-2">
+                    <Button
+                      onClick={() => setShowModeSelect(false)}
+                      size="sm"
+                      variant="outline"
+                      className="flex-1 text-primary border-primary"
+                    >
+                      취소
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        setShowModeSelect(false);
+                        setActiveSection("start");
+                      }}
+                      size="sm"
+                      className="flex-1 bg-primary hover:bg-primary/90"
+                    >
+                      시작하기
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="grid md:grid-cols-2 gap-4">
@@ -251,7 +325,7 @@ export function Dashboard() {
 
       case "start":
         return (
-          <MeetingStart meetings={meetings} onAddMeeting={handleAddMeeting} />
+          <MeetingStart meetings={meetings} onAddMeeting={handleAddMeeting} meetingMode={meetingMode} />
         );
 
       case "history":
