@@ -74,6 +74,30 @@ export interface ChatResponse {
   sources?: string[];
 }
 
+export interface QuickQuestion {
+  id: string;
+  question: string;
+  description: string;
+  category: 'summary' | 'action' | 'decision' | 'adversarial';
+  icon?: string;
+}
+
+export interface QuickQuestionsResponse {
+  questions: QuickQuestion[];
+  meeting_id?: string;
+}
+
+export interface FullTextChatResponse {
+  question: string;
+  answer: string;
+  used_meetings: Array<{
+    meeting_id: string;
+    title: string | null;
+    content_length: number;
+  }>;
+  created_at: string;
+}
+
 // ==================== API 함수 ====================
 
 /**
@@ -153,7 +177,7 @@ export const chatWithMeeting = async (
   message: string,
   history: ChatMessage[] = []
 ): Promise<ChatResponse> => {
-  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/chat`, 
+  const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/chat`,
     getFetchOptions({
       method: 'POST',
       body: JSON.stringify({
@@ -165,6 +189,42 @@ export const chatWithMeeting = async (
 
   await handleAuthResponse(response);
 
+  return response.json();
+};
+
+/**
+ * 챗봇 빠른 질문 선택지 조회
+ */
+export const getQuickQuestions = async (meetingId?: string): Promise<QuickQuestionsResponse> => {
+  const url = meetingId
+    ? `${API_URL}/api/v1/chatbot/quick-questions?meeting_id=${meetingId}`
+    : `${API_URL}/api/v1/chatbot/quick-questions`;
+
+  const response = await fetch(url, getFetchOptions({ method: 'GET' }));
+  await handleAuthResponse(response);
+  return response.json();
+};
+
+/**
+ * 챗봇 fulltext 질문 (RAG 기반, 적대적 지능 자동 감지)
+ */
+export const chatWithMeetingFulltext = async (
+  meetingIds: string[],
+  question: string,
+  conversationHistory?: ChatMessage[]
+): Promise<FullTextChatResponse> => {
+  const response = await fetch(`${API_URL}/api/v1/chatbot/ask-fulltext`,
+    getFetchOptions({
+      method: 'POST',
+      body: JSON.stringify({
+        meeting_ids: meetingIds,
+        question,
+        conversation_history: conversationHistory,
+      }),
+    })
+  );
+
+  await handleAuthResponse(response);
   return response.json();
 };
 

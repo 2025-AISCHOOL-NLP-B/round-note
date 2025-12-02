@@ -25,6 +25,7 @@ from backend.core.chatbot.conversation_helpers import (
     reinterpret_question,
 )
 from backend.core.chatbot.evaluation import PerformanceEvaluator
+from backend.core.chatbot.adversarial_intelligence import AdversarialIntelligence
 
 
 class ChatbotService:
@@ -77,15 +78,53 @@ class ChatbotService:
             "next_steps": getattr(meeting, "NEXT_STEPS", "") or "",
         }
 
-    def _invoke_llm(self, system_content: str, user_content: str, conversation_history: Optional[List[dict]] = None) -> str:
+    def _determine_temperature(self, question: str) -> float:
         """
-        OpenAI ChatCompletion 호출 래퍼
-        (테스트에서 override 하기 쉽도록 분리)
+        질문 유형에 따라 적응형 temperature 결정
+
+        Args:
+            question: 사용자 질문
+
+        Returns:
+            temperature 값 (0.0 ~ 1.0)
+        """
+        question_lower = question.lower()
+
+        # 1. 사실 기반 답변 (낮은 temperature = 0.2)
+        factual_keywords = ["요약", "정리", "개요", "누가", "언제", "어디서", "몇", "얼마"]
+        if any(keyword in question_lower for keyword in factual_keywords):
+            return 0.2
+
+        # 2. 창의적 답변 (높은 temperature = 0.7)
+        creative_keywords = ["아이디어", "제안", "어떻게 하면", "개선", "전략", "추천"]
+        if any(keyword in question_lower for keyword in creative_keywords):
+            return 0.7
+
+        # 3. 분석/추론 (중간 temperature = 0.5)
+        analytical_keywords = ["왜", "이유", "분석", "평가", "비교", "차이"]
+        if any(keyword in question_lower for keyword in analytical_keywords):
+            return 0.5
+
+        # 4. 기본값 (균형잡힌 0.4)
+        return 0.4
+
+    def _invoke_llm(
+        self,
+        system_content: str,
+        user_content: str,
+        conversation_history: Optional[List[dict]] = None,
+        temperature: Optional[float] = None,
+        stream: bool = False
+    ) -> str:
+        """
+        OpenAI ChatCompletion 호출 래퍼 (적응형 temperature 지원)
 
         Args:
             system_content: 시스템 프롬프트
             user_content: 사용자 프롬프트
-            conversation_history: 이전 대화 히스토리 (최근 N개)
+            conversation_history: 이전 대화 히스토리 (무제한)
+            temperature: 온도 값 (None이면 자동 결정)
+            stream: 스트리밍 모드 활성화 여부
         """
         logger = logging.getLogger(__name__)
         logger.info(f"OpenAI API 호출 시작 - 모델: {self.model}")
@@ -94,22 +133,35 @@ class ChatbotService:
             # 메시지 구성: system + history + current user message
             messages = [{"role": "system", "content": system_content}]
 
-            # 대화 히스토리 추가 (있는 경우)
+            # 대화 히스토리 추가 (있는 경우, 무제한)
             if conversation_history:
                 messages.extend(conversation_history)
-                logger.info(f"대화 히스토리 {len(conversation_history)}개 추가")
+                logger.info(f"대화 히스토리 {len(conversation_history)}개 추가 (전체 맥락 유지)")
 
             # 현재 사용자 메시지 추가
             messages.append({"role": "user", "content": user_content})
 
+            # Temperature 자동 결정 (제공되지 않은 경우)
+            if temperature is None:
+                # user_content에서 질문 추출하여 temperature 결정
+                temperature = self._determine_temperature(user_content)
+                logger.info(f"적응형 temperature 자동 설정: {temperature}")
+
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                temperature=0.3,
+                temperature=temperature,
+                stream=stream,
             )
-            answer = response.choices[0].message.content
-            logger.info(f"OpenAI API 호출 성공 - 응답 길이: {len(answer) if answer else 0}")
-            return answer
+
+            if stream:
+                # 스트리밍 모드: generator 반환
+                return response
+            else:
+                # 일반 모드: 전체 답변 반환
+                answer = response.choices[0].message.content
+                logger.info(f"OpenAI API 호출 성공 - 응답 길이: {len(answer) if answer else 0}")
+                return answer
         except Exception as e:
             logger.error(f"OpenAI API 호출 실패: {str(e)}", exc_info=True)
             raise
@@ -251,6 +303,103 @@ class ChatbotService:
             created_at=created_at,
         )
 
+    def _is_adversarial_question(self, question: str) -> bool:
+        """
+        질문이 적대적 지능 분석을 요청하는지 감지
+        """
+        adversarial_keywords = [
+            "놓친",
+            "누락",
+            "리스크",
+            "위험",
+            "문제",
+            "모순",
+            "불일치",
+            "비논리",
+            "적대적",
+            "비판",
+            "검토",
+            "체크",
+        ]
+
+        question_lower = question.lower()
+        return any(keyword in question_lower for keyword in adversarial_keywords)
+
+    def _format_adversarial_analysis(self, analysis: dict) -> str:
+        """
+        적대적 지능 분석 결과를 자연스러운 답변 형식으로 변환
+        """
+        parts = []
+
+        # 전체 점수
+        score = analysis.get("overall_score", 0)
+        if score >= 80:
+            parts.append(f"회의 품질 점수: {score:.1f}/100 (우수)")
+        elif score >= 60:
+            parts.append(f"회의 품질 점수: {score:.1f}/100 (양호)")
+        else:
+            parts.append(f"회의 품질 점수: {score:.1f}/100 (개선 필요)")
+
+        parts.append("")
+
+        # 주요 발견사항
+        inconsistencies = analysis.get("inconsistencies", [])
+        missing_points = analysis.get("missing_points", [])
+        contradictions = analysis.get("contradictions", [])
+        risks = analysis.get("risks", [])
+        illogical_conclusions = analysis.get("illogical_conclusions", [])
+
+        if inconsistencies:
+            parts.append(f"**논리적 불일치 ({len(inconsistencies)}건)**")
+            for idx, item in enumerate(inconsistencies[:3], 1):  # 최대 3개만
+                severity = item.get("severity", "medium")
+                desc = item.get("description", "")
+                parts.append(f"{idx}. [{severity.upper()}] {desc}")
+            parts.append("")
+
+        if missing_points:
+            parts.append(f"**누락된 논점 ({len(missing_points)}건)**")
+            for idx, item in enumerate(missing_points[:3], 1):
+                severity = item.get("severity", "medium")
+                topic = item.get("topic", "")
+                desc = item.get("description", "")
+                parts.append(f"{idx}. [{severity.upper()}] {topic}: {desc}")
+            parts.append("")
+
+        if contradictions:
+            parts.append(f"**과거 결정과의 모순 ({len(contradictions)}건)**")
+            for idx, item in enumerate(contradictions[:3], 1):
+                severity = item.get("severity", "medium")
+                desc = item.get("description", "")
+                parts.append(f"{idx}. [{severity.upper()}] {desc}")
+            parts.append("")
+
+        if risks:
+            parts.append(f"**잠재 리스크 ({len(risks)}건)**")
+            for idx, item in enumerate(risks[:3], 1):
+                severity = item.get("severity", "medium")
+                category = item.get("category", "기타")
+                desc = item.get("description", "")
+                parts.append(f"{idx}. [{severity.upper()}] [{category}] {desc}")
+            parts.append("")
+
+        if illogical_conclusions:
+            parts.append(f"**비논리적 결론 ({len(illogical_conclusions)}건)**")
+            for idx, item in enumerate(illogical_conclusions[:3], 1):
+                severity = item.get("severity", "medium")
+                conclusion = item.get("conclusion", "")
+                parts.append(f"{idx}. [{severity.upper()}] {conclusion}")
+            parts.append("")
+
+        # 권장사항
+        recommendations = analysis.get("recommendations", [])
+        if recommendations:
+            parts.append("**개선 권장사항**")
+            for rec in recommendations[:5]:  # 최대 5개
+                parts.append(f"- {rec}")
+
+        return "\n".join(parts)
+
     def answer_question_fulltext(
         self,
         db: Session,
@@ -279,7 +428,42 @@ class ChatbotService:
         reinterpreted_question = reinterpret_question(payload.question)
         logger.info(f"질문 재해석: '{payload.question}' → '{reinterpreted_question}'")
 
-        # ========== 2) 인사말/일상 대화 감지 (LLM 호출 없이 처리) ==========
+        # ========== 2) 적대적 지능 질문 감지 ==========
+        is_adversarial = self._is_adversarial_question(payload.question)
+
+        if is_adversarial and len(payload.meeting_ids) == 1:
+            # 적대적 지능 분석은 단일 회의에 대해서만 수행
+            logger.info("적대적 지능 질문 감지 - 분석 수행")
+            try:
+                analyzer = AdversarialIntelligence(db=db)
+                analysis_result = analyzer.analyze_meeting(payload.meeting_ids[0])
+
+                # 분석 결과를 자연스러운 답변으로 변환
+                formatted_answer = self._format_adversarial_analysis(analysis_result)
+
+                # 회의 정보
+                meeting = db.query(models.Meeting).filter(
+                    models.Meeting.MEETING_ID == payload.meeting_ids[0]
+                ).first()
+
+                meeting_context = MeetingContext(
+                    meeting_id=meeting.MEETING_ID,
+                    title=meeting.TITLE or "제목 없음",
+                    content_length=len(meeting.CONTENT or "")
+                )
+
+                return FullTextChatbotResponse(
+                    question=payload.question,
+                    answer=formatted_answer,
+                    used_meetings=[meeting_context],
+                    created_at=datetime.now(),
+                )
+            except Exception as e:
+                logger.error(f"적대적 지능 분석 실패: {e}", exc_info=True)
+                # 실패 시 일반 RAG 챗봇으로 폴백
+                logger.info("적대적 지능 분석 실패 - 일반 RAG로 폴백")
+
+        # ========== 3) 인사말/일상 대화 감지 (LLM 호출 없이 처리) ==========
         skip_llm, direct_response = should_skip_llm(payload.question)
 
         if skip_llm:
@@ -291,7 +475,7 @@ class ChatbotService:
                 created_at=datetime.now(),
             )
 
-        # ========== 3) 회의 조회 ==========
+        # ========== 4) 회의 조회 ==========
         meetings = (
             db.query(models.Meeting)
             .filter(models.Meeting.MEETING_ID.in_(payload.meeting_ids))
@@ -302,7 +486,7 @@ class ChatbotService:
             logger.warning("유효한 회의를 찾을 수 없습니다.")
             raise ValueError("유효한 회의를 찾을 수 없습니다.")
 
-        # ========== 4) RAG 벡터 검색으로 관련 청크 수집 ==========
+        # ========== 5) RAG 벡터 검색으로 관련 청크 수집 ==========
         retriever = RAGRetriever(db)
         all_retrieved_chunks = []
         meeting_contexts = []
@@ -366,13 +550,46 @@ class ChatbotService:
                 )
             )
 
-        # ========== 5) 검색된 청크를 유사도 순으로 정렬 후 상위 20개 선택 ==========
+        # ========== 6) 검색된 청크를 유사도 순으로 정렬 후 상위 20개 선택 ==========
         if not all_retrieved_chunks:
-            logger.warning("RAG 검색 결과가 없습니다. 회의에 임베딩 데이터가 없을 수 있습니다.")
-            # 검색 결과가 없을 경우 기본 메시지 반환
+            logger.warning("RAG 검색 결과가 없습니다. RAG 폴백 모드로 전환합니다.")
+            # ✅ RAG 폴백 전략: 검색 결과가 없어도 LLM의 일반 지식으로 답변 시도
+            fallback_system_prompt = """당신은 회의 전문 AI 어시스턴트입니다.
+
+현재 회의 전사 데이터에서 관련 정보를 찾을 수 없었습니다.
+하지만 사용자에게 도움이 될 수 있도록 일반적인 지식과 조언을 제공하세요.
+
+답변 시 다음을 포함하세요:
+1. 회의 데이터에서 정보를 찾을 수 없다는 점 명시
+2. 일반적인 업무 관행이나 추천 사항 제공
+3. 사용자가 어떻게 정보를 찾을 수 있는지 안내"""
+
+            fallback_user_prompt = f"""사용자 질문: {reinterpreted_question}
+
+회의 전사 데이터에서 관련 정보를 찾을 수 없었습니다.
+하지만 질문에 대해 일반적인 조언이나 도움이 될 만한 정보를 제공해주세요."""
+
+            # 대화 히스토리 준비
+            conversation_history = None
+            if payload.conversation_history:
+                conversation_history = [
+                    {"role": msg.role, "content": msg.content}
+                    for msg in payload.conversation_history
+                ]
+
+            # LLM 호출 (일반 지식 기반)
+            fallback_answer = self._invoke_llm(
+                fallback_system_prompt,
+                fallback_user_prompt,
+                conversation_history,
+                temperature=0.5  # 균형잡힌 temperature
+            )
+
+            logger.info(f"RAG 폴백 답변 생성 완료 - 길이: {len(fallback_answer)}")
+
             return FullTextChatbotResponse(
                 question=payload.question,
-                answer="죄송합니다. 해당 회의에서 관련 정보를 찾을 수 없습니다. 회의 전사 데이터가 처리되지 않았거나, 질문과 관련된 내용이 없을 수 있습니다.",
+                answer=fallback_answer,
                 used_meetings=meeting_contexts,
                 created_at=datetime.now(),
             )
@@ -382,7 +599,7 @@ class ChatbotService:
 
         logger.info(f"총 {len(all_retrieved_chunks)}개 청크 중 상위 {len(top_chunks)}개 선택")
 
-        # ========== 6) 컨텍스트 구성 (RAG 검색 결과 기반) ==========
+        # ========== 7) 컨텍스트 구성 (RAG 검색 결과 기반) ==========
         context_parts = []
         for chunk in top_chunks:
             header = f"[회의: {chunk['meeting_title']} | 유사도: {chunk['similarity']:.3f}]"
@@ -402,38 +619,45 @@ class ChatbotService:
 
         combined_context = "\n\n".join(context_parts) + f"\n\n[액션 아이템 정보]\n{action_items_context}"
 
-        # ========== 7) System/User 프롬프트 구성 (RAG 기반, 유연한 톤 + Few-shot 예시) ==========
-        system_prompt = """당신은 회의 내용을 분석하고 질문에 답변하는 친근하고 유연한 한국어 AI 비서입니다.
+        # ========== 8) System/User 프롬프트 구성 (유연한 프롬프트 + RAG 폴백) ==========
+        system_prompt = """당신은 회의 전문 AI 어시스턴트입니다.
 
-[답변 규칙]
-1. 제공된 RAG 검색 결과(관련 회의 발언)와 액션 아이템에 근거해서만 답변하세요
-2. 검색 결과에 없는 내용은 "해당 회의에서 관련 내용을 찾을 수 없습니다" + 도움될 만한 제안 추가
-3. 여러 회의가 제공된 경우, 각 회의를 구분하거나 종합하여 설명
-4. 답변은 핵심 위주로 간결하게 (2-3문장 권장)
-5. 자연스럽고 친근한 톤 유지
-6. 불필요한 반복 피하기 (매번 같은 인사말 반복 금지)
-7. 검색된 청크의 유사도가 낮으면 (0.5 미만) 신중하게 답변하세요
+[핵심 역할]
+제공된 회의 내용을 기반으로 답변하되, 필요시 일반 지식도 활용하여 사용자에게 도움이 되는 답변을 제공하세요.
 
-[톤 가이드]
-- 정보가 있을 때: 자연스럽게 답변 ("네, ~입니다", "~로 결정되었습니다")
-- 정보가 없을 때: 친절하게 대안 제시
-- 항상 간결하고 명확하게
+[답변 가이드]
+1. **우선순위**: 제공된 RAG 검색 결과와 액션 아이템을 최우선으로 참고
+2. **폴백 전략**: 검색 결과가 불충분하거나 없는 경우:
+   - 검색 결과가 있지만 유사도가 낮을 때 (0.5 미만): 일반적인 조언과 함께 답변
+   - 검색 결과가 전혀 없을 때: 일반 지식을 활용하여 유용한 정보 제공
+3. **답변 스타일**:
+   - 자연스럽고 대화적인 톤 유지
+   - 핵심 위주로 간결하게 (2-4문장 권장)
+   - 불필요한 반복 피하기
+4. **맥락 활용**:
+   - 이전 대화 내용을 참고하여 연속적인 대화 지원
+   - 사용자가 "그럼 액션 아이템은?"처럼 이전 맥락을 참조하면 적절히 대응
+5. **유연성**:
+   - 모든 질문에 도움이 되는 답변 제공
+   - "정보 없음"으로만 끝내지 말고, 대안이나 조언 제시
 
 [Few-shot 예시]
 
 Q: "이번 회의 요약해줘"
 A: "이번 회의에서는 신제품 출시 일정을 논의했습니다. 최종 출시일은 2025년 3월 15일로 결정되었고, 마케팅팀은 2월 말까지 홍보 자료를 준비하기로 했습니다."
 
-Q: "내가 맡은 역할이 뭐야?" 또는 "해야 될 일 알려줘"
+Q: "내가 맡은 역할이 뭐야?"
 A: "액션 아이템을 확인해보니, 김철수님께서 담당하신 업무는 다음과 같습니다:
 1. [PENDING] 마케팅 자료 준비 (마감: 2025-02-28, 우선순위: HIGH)
 2. [IN_PROGRESS] 예산안 검토 (마감: 2025-02-15, 우선순위: MEDIUM)"
 
 Q: "예산은 얼마로 결정됐어?"
-A: "해당 회의에서 예산에 대한 명확한 언급은 없었습니다. 다음 회의에서 논의될 예정인 것으로 보입니다."
+A: "회의 내용에서 예산에 대한 명확한 언급은 없었습니다. 일반적으로 이런 경우 다음 회의에서 논의되거나, 별도 예산 검토 미팅을 통해 결정됩니다. 담당자에게 확인해보시는 것을 추천드립니다."
 
-Q: "다음 회의 일정은?"
-A: "전사 내용에서 다음 회의 일정에 대한 언급을 찾을 수 없었습니다. 회의록이나 일정 관리 시스템을 확인해보시는 것을 추천드립니다." """
+Q: "그럼 액션 아이템은?" (이전 맥락 참조)
+A: "현재 회의에서 결정된 액션 아이템은 다음과 같습니다:
+1. [PENDING] 예산안 초안 작성 (담당: 재무팀, 마감: 2월 10일)
+2. [PENDING] 예산 검토 회의 일정 조율 (담당: PM, 마감: 2월 5일)" """
 
         user_prompt = (
             f"[RAG 검색 결과 - 질문과 관련된 회의 발언들]\n"
@@ -442,7 +666,7 @@ A: "전사 내용에서 다음 회의 일정에 대한 언급을 찾을 수 없�
             "위 검색 결과만을 근거로, 한국어로 자연스럽게 답변하세요."
         )
 
-        # ========== 8) 대화 히스토리 준비 ==========
+        # ========== 9) 대화 히스토리 준비 ==========
         conversation_history = None
         if payload.conversation_history:
             # 스키마의 ConversationMessage를 dict로 변환
@@ -452,15 +676,15 @@ A: "전사 내용에서 다음 회의 일정에 대한 언급을 찾을 수 없�
             ]
             logger.info(f"대화 히스토리 {len(conversation_history)}개 메시지 사용")
 
-        # ========== 9) LLM 호출 ==========
+        # ========== 10) LLM 호출 ==========
         logger.info("LLM 호출 시작")
         answer_text = self._invoke_llm(system_prompt, user_prompt, conversation_history)
         logger.info(f"LLM 호출 완료 - 답변 길이: {len(answer_text)}")
 
-        # ========== 10) 답변 패턴 다양화 ==========
+        # ========== 11) 답변 패턴 다양화 ==========
         enhanced_answer = enhance_answer(answer_text, payload.question)
 
-        # ========== 11) 성능 평가 (활성화된 경우) ==========
+        # ========== 12) 성능 평가 (활성화된 경우) ==========
         if self.enable_evaluation and self.evaluator and start_time:
             end_time = time.time()
             metrics = self.evaluator.evaluate_all(
@@ -480,7 +704,7 @@ A: "전사 내용에서 다음 회의 일정에 대한 언급을 찾을 수 없�
                 f"응답시간: {metrics.response_time_ms:.1f}ms"
             )
 
-        # ========== 12) 응답 생성 ==========
+        # ========== 13) 응답 생성 ==========
         response = FullTextChatbotResponse(
             question=payload.question,
             answer=enhanced_answer,
@@ -489,3 +713,151 @@ A: "전사 내용에서 다음 회의 일정에 대한 언급을 찾을 수 없�
         )
         logger.info("RAG 챗봇 처리 완료")
         return response
+
+    def answer_question_streaming(
+        self,
+        db: Session,
+        payload: FullTextChatbotRequest,
+    ):
+        """
+        RAG 기반 챗봇 (스트리밍 모드): 실시간으로 답변 생성
+
+        Args:
+            db: 데이터베이스 세션
+            payload: meeting_ids와 question을 포함한 요청
+
+        Yields:
+            답변 청크를 실시간으로 스트리밍
+        """
+        from datetime import datetime
+        logger = logging.getLogger(__name__)
+
+        logger.info(f"스트리밍 챗봇 처리 시작 - 회의 ID: {payload.meeting_ids}")
+
+        # ========== 1) 질문 재해석 ==========
+        reinterpreted_question = reinterpret_question(payload.question)
+        logger.info(f"질문 재해석: '{payload.question}' → '{reinterpreted_question}'")
+
+        # ========== 2) 적대적 지능 질문 감지 (스트리밍에서는 일반 답변으로 처리) ==========
+        # 적대적 지능 분석은 단일 회의 + 비스트리밍 모드에서만 수행
+        # 스트리밍 모드에서는 일반 RAG 답변으로 처리
+
+        # ========== 3) 인사말/일상 대화 감지 ==========
+        skip_llm, direct_response = should_skip_llm(payload.question)
+        if skip_llm:
+            yield f"data: {direct_response}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
+        # ========== 4) 회의 조회 ==========
+        meetings = (
+            db.query(models.Meeting)
+            .filter(models.Meeting.MEETING_ID.in_(payload.meeting_ids))
+            .all()
+        )
+
+        if not meetings:
+            yield "data: " + '{"error": "유효한 회의를 찾을 수 없습니다."}\n\n'
+            return
+
+        # ========== 5) RAG 벡터 검색 ==========
+        retriever = RAGRetriever(db)
+        all_retrieved_chunks = []
+
+        for meeting in meetings:
+            retrieved_results = retriever.retrieve(
+                query=reinterpreted_question,
+                k=10,
+                meeting_id=meeting.MEETING_ID,
+            )
+
+            for chunk_data in retrieved_results:
+                chunk_text = chunk_data.get("text", "")
+                similarity = chunk_data.get("similarity") or 0.0
+                embedding_id = chunk_data.get("embedding_id") or ""
+
+                all_retrieved_chunks.append({
+                    "meeting_title": meeting.TITLE or "제목 없음",
+                    "text": chunk_text,
+                    "similarity": similarity,
+                    "embedding_id": embedding_id,
+                })
+
+        # ========== 6) RAG 폴백 처리 ==========
+        if not all_retrieved_chunks:
+            logger.warning("RAG 검색 결과가 없습니다. 스트리밍 폴백 모드")
+            fallback_system_prompt = """당신은 회의 전문 AI 어시스턴트입니다.
+회의 데이터에서 정보를 찾을 수 없었지만, 일반적인 조언을 제공하세요."""
+
+            fallback_user_prompt = f"사용자 질문: {reinterpreted_question}\n\n일반적인 조언을 제공해주세요."
+
+            conversation_history = None
+            if payload.conversation_history:
+                conversation_history = [
+                    {"role": msg.role, "content": msg.content}
+                    for msg in payload.conversation_history
+                ]
+
+            # 스트리밍 LLM 호출
+            stream_response = self._invoke_llm(
+                fallback_system_prompt,
+                fallback_user_prompt,
+                conversation_history,
+                temperature=0.5,
+                stream=True
+            )
+
+            for chunk in stream_response:
+                if chunk.choices[0].delta.content:
+                    yield f"data: {chunk.choices[0].delta.content}\n\n"
+
+            yield "data: [DONE]\n\n"
+            return
+
+        # ========== 7) 검색 결과 정렬 및 컨텍스트 구성 ==========
+        all_retrieved_chunks.sort(key=lambda x: x["similarity"], reverse=True)
+        top_chunks = all_retrieved_chunks[:20]
+
+        context_parts = []
+        for chunk in top_chunks:
+            header = f"[회의: {chunk['meeting_title']} | 유사도: {chunk['similarity']:.3f}]"
+            context_parts.append(f"{header}\n{chunk['text']}")
+
+        combined_context = "\n\n".join(context_parts)
+
+        # ========== 8) System/User 프롬프트 ==========
+        system_prompt = """당신은 회의 전문 AI 어시스턴트입니다.
+제공된 회의 내용을 기반으로 답변하되, 필요시 일반 지식도 활용하세요.
+자연스럽고 대화적인 톤으로 간결하게 답변하세요."""
+
+        user_prompt = (
+            f"[RAG 검색 결과]\n{combined_context}\n\n"
+            f"[사용자 질문]\n{reinterpreted_question}\n\n"
+            "위 검색 결과를 근거로 답변하세요."
+        )
+
+        # ========== 9) 대화 히스토리 준비 ==========
+        conversation_history = None
+        if payload.conversation_history:
+            conversation_history = [
+                {"role": msg.role, "content": msg.content}
+                for msg in payload.conversation_history
+            ]
+
+        # ========== 10) 스트리밍 LLM 호출 ==========
+        logger.info("스트리밍 LLM 호출 시작")
+        stream_response = self._invoke_llm(
+            system_prompt,
+            user_prompt,
+            conversation_history,
+            temperature=None,  # 자동 결정
+            stream=True
+        )
+
+        # ========== 11) 스트리밍 응답 전송 ==========
+        for chunk in stream_response:
+            if chunk.choices[0].delta.content:
+                yield f"data: {chunk.choices[0].delta.content}\n\n"
+
+        yield "data: [DONE]\n\n"
+        logger.info("스트리밍 챗봇 처리 완료")

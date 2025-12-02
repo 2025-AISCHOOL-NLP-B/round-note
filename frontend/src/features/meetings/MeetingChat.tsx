@@ -3,8 +3,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Input } from '@/shared/ui/input';
 import { Button } from '@/shared/ui/button';
-import { MessageSquare, X, Minus } from 'lucide-react';
+import { MessageSquare, X, Minus, Sparkles } from 'lucide-react';
 import type { Meeting } from '@/features/dashboard/Dashboard';
+import { getQuickQuestions, type QuickQuestion } from '@/features/meetings/reportsService';
 
 export default function MeetingChat({ meeting, open, onOpen, onClose }: { meeting?: Meeting; open?: boolean; onOpen?: () => void; onClose?: () => void }) {
   const [messages, setMessages] = useState<Array<{ id: string; sender: 'user' | 'bot'; text: string; time: string; sources?: Array<{ embedding_id?: string; text: string; similarity?: number }> }>>([{
@@ -13,6 +14,8 @@ export default function MeetingChat({ meeting, open, onOpen, onClose }: { meetin
   const [showSourcesMap, setShowSourcesMap] = useState<Record<string, boolean>>({});
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [quickQuestions, setQuickQuestions] = useState<QuickQuestion[]>([]);
+  const [showQuickQuestions, setShowQuickQuestions] = useState(true);
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
   const getAuthToken = (): string | null => {
@@ -29,6 +32,74 @@ export default function MeetingChat({ meeting, open, onOpen, onClose }: { meetin
   const clickCandidateRef = useRef<boolean>(false);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
+  // 빠른 질문 선택지 로드
+  useEffect(() => {
+    const loadQuickQuestions = async () => {
+      console.log('[MeetingChat] Loading quick questions, meeting:', meeting);
+
+      if (!meeting) {
+        console.log('[MeetingChat] No meeting provided');
+        return;
+      }
+
+      const meetingId = (meeting as any)?.meeting_id || (meeting as any)?.id || null;
+      console.log('[MeetingChat] Meeting ID:', meetingId);
+
+      // 기본 질문 선택지를 먼저 설정 (즉시 표시)
+      const defaultQuestions = [
+        {
+          id: 'summary',
+          question: '이번 회의 핵심 내용을 요약해주세요',
+          description: '회의의 주요 내용, 논의사항, 결론을 간단히 정리해드립니다',
+          category: 'summary' as const,
+          icon: '📝'
+        },
+        {
+          id: 'action',
+          question: '내가 해야 할 일이 무엇인가요?',
+          description: '회의에서 나에게 할당된 액션 아이템과 마감일을 확인합니다',
+          category: 'action' as const,
+          icon: '✅'
+        },
+        {
+          id: 'decision',
+          question: '주요 결정사항과 합의된 내용은 무엇인가요?',
+          description: '회의에서 내려진 의사결정과 팀이 합의한 사항을 알려드립니다',
+          category: 'decision' as const,
+          icon: '🎯'
+        },
+        {
+          id: 'adversarial',
+          question: '이 회의에서 놓친 부분이나 리스크가 있나요?',
+          description: '적대적 지능으로 논리적 불일치, 누락된 논점, 과거 결정과의 모순, 잠재 리스크를 탐지합니다',
+          category: 'adversarial' as const,
+          icon: '🔍'
+        },
+      ];
+
+      // 즉시 기본 질문 설정
+      setQuickQuestions(defaultQuestions);
+      console.log('[MeetingChat] Default questions set:', defaultQuestions.length);
+
+      if (!meetingId) {
+        console.log('[MeetingChat] No valid meeting ID, using default questions');
+        return;
+      }
+
+      // API에서 질문 가져오기 시도 (백그라운드)
+      try {
+        const response = await getQuickQuestions(meetingId);
+        console.log('[MeetingChat] API questions loaded:', response.questions.length);
+        setQuickQuestions(response.questions);
+      } catch (error) {
+        console.error('[MeetingChat] Failed to load quick questions from API:', error);
+        // 기본 질문 유지
+      }
+    };
+
+    loadQuickQuestions();
+  }, [meeting]);
 
   useEffect(() => {
     // initialize position to bottom-right on mount
@@ -122,13 +193,14 @@ export default function MeetingChat({ meeting, open, onOpen, onClose }: { meetin
     clickCandidateRef.current = true;
   };
 
-  const send = async () => {
-    const question = input.trim();
+  const send = async (questionText?: string) => {
+    const question = (questionText || input).trim();
     if (!question || !meeting) return;
 
     const user = { id: String(Date.now()), sender: 'user' as const, text: question, time: new Date().toISOString() };
     setMessages(m => [...m, user]);
     setInput('');
+    setShowQuickQuestions(false); // 질문 후 선택지 숨김
 
     setIsTyping(true);
     try {
@@ -136,10 +208,10 @@ export default function MeetingChat({ meeting, open, onOpen, onClose }: { meetin
       // support different meeting id field names (meeting_id vs id)
       const meetingId = (meeting as any)?.meeting_id || (meeting as any)?.id || null;
 
-      // Build conversation history from recent messages (최근 5개 쌍, 즉 10개 메시지)
+      // ✅ 개선: 전체 대화 히스토리 전송 (무제한)
       const conversationHistory = messages
         .filter(m => m.sender === 'user' || m.sender === 'bot')
-        .slice(-10)
+        // .slice(-10) 제거 - 전체 히스토리 전송
         .map(m => ({
           role: m.sender === 'user' ? 'user' : 'assistant',
           content: m.text
@@ -279,6 +351,57 @@ export default function MeetingChat({ meeting, open, onOpen, onClose }: { meetin
                 </div>
               </div>
             ))}
+
+            {/* 빠른 질문 선택지 */}
+            {quickQuestions.length > 0 && (
+              <div className="space-y-2 mt-3 bg-white">
+                <div className="flex items-center gap-1 text-xs font-medium text-gray-600 px-1">
+                  <Sparkles className="w-3 h-3" />
+                  추천 질문 (총 {quickQuestions.length}개)
+                </div>
+                <div className="space-y-1.5">
+                  {quickQuestions.map((q, idx) => {
+                    console.log(`[MeetingChat] Rendering question ${idx}:`, q.question);
+                    return (
+                      <button
+                        key={q.id}
+                        className="w-full text-left p-2.5 rounded-lg border border-gray-200 hover:border-blue-300 hover:bg-blue-50 transition-all bg-white"
+                        onClick={() => {
+                          console.log('[MeetingChat] Question clicked:', q.question);
+                          send(q.question);
+                        }}
+                        disabled={isTyping}
+                      >
+                        <div className="flex gap-2 items-start">
+                          <span className="text-lg flex-shrink-0">{q.icon}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-xs text-gray-900 leading-tight">
+                              {q.question}
+                            </div>
+                            <div className="text-[10px] text-gray-500 mt-0.5 leading-snug">
+                              {q.description}
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {isTyping && (
+              <div className="flex justify-start">
+                <div className="bg-gray-100 text-gray-900 rounded-lg px-3 py-2">
+                  <div className="flex gap-1">
+                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
+                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
+                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div ref={bottomRef} />
           </div>
         </div>

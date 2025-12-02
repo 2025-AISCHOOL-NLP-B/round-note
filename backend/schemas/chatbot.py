@@ -99,7 +99,7 @@ class FullTextChatbotRequest(BaseModel):
     question: str = Field(..., description="사용자 질문", min_length=1)
     conversation_history: Optional[List[ConversationMessage]] = Field(
         default=None,
-        description="이전 대화 히스토리 (최근 5개 권장)"
+        description="이전 대화 히스토리 (무제한, 전체 대화 맥락 유지)"
     )
 
 
@@ -190,3 +190,42 @@ class AdversarialAnalysisResponse(BaseModel):
     illogical_conclusions: List[dict] = Field(default_factory=list, description="비논리적 결론 목록")
     overall_score: float = Field(..., description="전체 품질 점수 (0-100, 높을수록 좋음)")
     recommendations: List[str] = Field(default_factory=list, description="개선 권장사항")
+
+
+# ==================== 챗봇 질문 선택지 스키마 ====================
+
+class QuickQuestion(BaseModel):
+    """
+    챗봇 빠른 질문 선택지
+    """
+    id: str = Field(..., description="질문 ID")
+    question: str = Field(..., description="질문 텍스트")
+    description: str = Field(..., description="질문에 대한 설명")
+    category: str = Field(..., description="질문 카테고리 (summary, action, decision, adversarial)")
+    icon: Optional[str] = Field(None, description="아이콘 이모지 또는 아이콘명")
+
+
+class QuickQuestionsResponse(BaseModel):
+    """
+    빠른 질문 선택지 목록 응답
+    """
+    questions: List[QuickQuestion] = Field(..., description="질문 선택지 목록")
+    meeting_id: Optional[str] = Field(None, description="특정 회의 ID (있는 경우)")
+
+
+# ==================== 스트리밍 응답 스키마 ====================
+
+class StreamingChatbotRequest(BaseModel):
+    """
+    스트리밍 챗봇 요청 스키마
+    """
+    meeting_ids: List[str] = Field(
+        ...,
+        description="질문 대상 회의 ID 리스트 (1개 이상)",
+        min_length=1
+    )
+    question: str = Field(..., description="사용자 질문", min_length=1)
+    conversation_history: Optional[List[ConversationMessage]] = Field(
+        default=None,
+        description="이전 대화 히스토리 (무제한, 전체 대화 맥락 유지)"
+    )

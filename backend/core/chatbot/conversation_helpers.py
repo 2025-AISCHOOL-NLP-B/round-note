@@ -308,31 +308,40 @@ def should_skip_llm(question: str) -> Tuple[bool, Optional[str]]:
     """
     LLM 호출 없이 바로 응답 가능한지 판단
 
+    ✅ 개선: 맥락 참조 질문은 LLM으로 전달 (대화 히스토리 활용)
+
     Args:
         question: 사용자 질문
 
     Returns:
         (LLM 스킵 여부, 직접 응답 텍스트)
     """
+    question_lower = question.lower().strip()
+
+    # ✅ 맥락 참조 키워드 감지 - LLM으로 전달해야 함
+    context_reference_keywords = [
+        "아까", "방금", "지금까지", "그거", "그것", "그게",
+        "첫 번째", "두 번째", "마지막", "이전", "위에서",
+        "전에", "앞서", "앞에서", "ceo", "참석자", "누가"
+    ]
+
+    # 맥락 참조 질문은 반드시 LLM으로 전달 (대화 히스토리 필요)
+    if any(keyword in question_lower for keyword in context_reference_keywords):
+        return False, None  # LLM 호출 필요
+
     question_type, category = ConversationClassifier.classify_question(question)
 
-    # 인사말
-    if question_type == QuestionType.GREETING:
+    # 인사말만 스킵 (매우 명확한 경우만)
+    if question_type == QuestionType.GREETING and len(question) < 10:
         return True, ResponseGenerator.generate_greeting_response()
 
-    # 일상 대화 (자기소개, 감사, 칭찬 등)
+    # 일상 대화 (자기소개, 감사, 칭찬 - 명확한 경우만)
     if question_type == QuestionType.SMALL_TALK:
         return True, ResponseGenerator.generate_small_talk_response(category, question)
 
-    # 불분명한 질문 (우선순위 상향 - LLM 호출 불필요)
-    if question_type == QuestionType.UNCLEAR:
-        return True, ResponseGenerator.generate_unclear_response()
-
-    # 회의 무관 질문
-    if question_type == QuestionType.OFF_TOPIC:
-        return True, ResponseGenerator.generate_off_topic_response()
-
-    # 회의 관련 질문은 LLM 호출 필요
+    # ✅ 나머지는 모두 LLM으로 전달 (유연성 향상)
+    # - 불분명한 질문도 LLM이 대화 히스토리로 해석 가능
+    # - 회의 무관 질문도 RAG 폴백으로 처리
     return False, None
 
 
