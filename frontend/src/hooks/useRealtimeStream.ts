@@ -58,7 +58,7 @@ interface RealtimeStreamControls {
     translation: string;
     timelineSummaries: TimelineSummary[];
     isGeneratingSummary: boolean;
-    startRecording: (meetingId?: string) => Promise<void>;
+    startRecording: (meetingId?: string, participants?: string) => Promise<void>;
     stopRecording: () => void;
     pauseRecording: () => void;
     resumeRecording: () => void;
@@ -154,7 +154,12 @@ const useRealtimeStream = (): RealtimeStreamControls => {
             // 1. AudioContext 생성
             const audioContext = new AudioContext({ sampleRate: AUDIO_CONFIG.sampleRate });
             audioContextRef.current = audioContext;
-            console.log(`[AudioSetup] AudioContext created. SampleRate: ${audioContext.sampleRate}, State: ${audioContext.state}`);
+            const actualSampleRate = audioContext.sampleRate;
+            console.log(`[AudioSetup] AudioContext created. Requested: ${AUDIO_CONFIG.sampleRate}, Actual: ${actualSampleRate}, State: ${audioContext.state}`);
+            
+            if (actualSampleRate !== AUDIO_CONFIG.sampleRate) {
+                console.warn(`⚠️ 샘플레이트 불일치! 요청: ${AUDIO_CONFIG.sampleRate}Hz, 실제: ${actualSampleRate}Hz`);
+            }
 
             // 2. Worklet 모듈 로드
             try {
@@ -181,12 +186,22 @@ const useRealtimeStream = (): RealtimeStreamControls => {
             micSourceRef.current = micSource;
             micSource.connect(mergerNode, 0, 0);
 
-            // 4.5 시스템 오디오가 이미 있다면 연결 (Channel 1)
+            // 4.5 시스템 오디오가 이미 있다면 연결 (Channel 1), 없으면 무음 소스 연결
             if (systemStreamRef.current) {
                 const systemSource = audioContext.createMediaStreamSource(systemStreamRef.current);
                 systemSourceRef.current = systemSource;
                 systemSource.connect(mergerNode, 0, 1);
                 console.log("기존 시스템 오디오 스트림 연결됨");
+            } else {
+                // [Fix] 시스템 오디오가 없을 때 Channel 1에 명시적으로 무음 연결
+                // ChannelMerger가 연결되지 않은 채널을 다른 채널로 채우는 것을 방지
+                const silenceBuffer = audioContext.createBuffer(1, 128, audioContext.sampleRate);
+                const silenceSource = audioContext.createBufferSource();
+                silenceSource.buffer = silenceBuffer;
+                silenceSource.loop = true;
+                silenceSource.connect(mergerNode, 0, 1);
+                silenceSource.start();
+                console.log("✅ Channel 1에 무음 소스 연결 (마이크 전용 모드)");
             }
 
             // 5. 프로세서 연결
@@ -205,12 +220,20 @@ const useRealtimeStream = (): RealtimeStreamControls => {
                 console.log("AudioContext resumed");
             }
 
+            // 5.5 시스템 오디오 공유 상태를 Worklet에 알림
+            const systemAudioShared = !!systemStreamRef.current;
+            stereoNode.port.postMessage({ 
+                type: 'setSystemAudioActive', 
+                value: systemAudioShared 
+            });
+            console.log(`[AudioSetup] System Audio Active: ${systemAudioShared}`);
+
             // 6. 데이터 전송 핸들러
             stereoNode.port.onmessage = (event) => {
                 if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                     // event.data is ArrayBuffer (Int16)
                     // console.log(`Sending audio chunk: ${event.data.byteLength} bytes`); // Debug
-
+                    
                     // [Debug] 가끔씩 데이터 내용 확인
                     if (Math.random() < 0.01) {
                         const int16Data = new Int16Array(event.data);
@@ -286,6 +309,15 @@ const useRealtimeStream = (): RealtimeStreamControls => {
                     systemSourceRef.current = systemSource;
                     systemSource.connect(mergerNodeRef.current, 0, 1);
                     console.log("시스템 오디오 연결됨 (기존 그래프)");
+                    
+                    // Worklet에 시스템 오디오 활성화 알림
+                    if (stereoNodeRef.current) {
+                        stereoNodeRef.current.port.postMessage({ 
+                            type: 'setSystemAudioActive', 
+                            value: true 
+                        });
+                        console.log("[SystemAudio] Worklet에 시스템 오디오 활성화 알림");
+                    }
                  } else {
                     // 그래프가 없으면 새로 설정 (MicStream이 있어야 함)
                     if (mediaStreamRef.current) {
@@ -322,6 +354,16 @@ const useRealtimeStream = (): RealtimeStreamControls => {
         }
 
         setIsSystemAudioShared(false);
+        
+        // Worklet에 시스템 오디오 비활성화 알림
+        if (stereoNodeRef.current) {
+            stereoNodeRef.current.port.postMessage({ 
+                type: 'setSystemAudioActive', 
+                value: false 
+            });
+            console.log("[SystemAudio] Worklet에 시스템 오디오 비활성화 알림");
+        }
+        
         console.log("시스템 오디오 공유 중지됨");
     }, []);
 
@@ -350,12 +392,16 @@ const useRealtimeStream = (): RealtimeStreamControls => {
                 // Channels=1 (Mono): VAD Mono 데이터 그대로 전송
                 // Channels=2 (Stereo): Mono 데이터를 Stereo로 변환하여 전송
                 if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                    if (currentChannelsRef.current === 1) {
+                    const currentChannels = currentChannelsRef.current;
+                    
+                    if (currentChannels === 1) {
+                        // Mono 전송
                         const int16Frame = float32ToInt16(frame);
                         if (int16Frame.buffer.byteLength > 0) {
                             wsRef.current.send(int16Frame.buffer);
                         }
                     } else {
+                        // Stereo 전송 (Mono를 L-R-L-R로 복제)
                         const stereoFrame = float32ToStereoInt16(frame);
                         if (stereoFrame.buffer.byteLength > 0) {
                             wsRef.current.send(stereoFrame.buffer);
@@ -507,25 +553,41 @@ const useRealtimeStream = (): RealtimeStreamControls => {
     }, [vadPause]);
 
     // 녹음 시작
-    const startRecording = useCallback(async (meetingId?: string) => {
+    const startRecording = useCallback(async (meetingId?: string, participants?: string) => {
         if (vadLoading) {
             console.log("VAD 로딩 중...");
             return;
         }
 
         try {
+            // [Fix] AudioContext를 WebSocket 연결 전에 미리 생성하여 실제 샘플레이트 감지
+            if (!audioContextRef.current) {
+                audioContextRef.current = new AudioContext({ sampleRate: AUDIO_CONFIG.sampleRate });
+                const detectedRate = audioContextRef.current.sampleRate;
+                console.log(`[AudioSetup] AudioContext created. SampleRate: ${detectedRate}Hz`);
+            }
+
             // [Optimization] 시스템 오디오 공유 여부에 따라 채널 수 결정
             // System Audio ON -> Stereo (2ch)
             // System Audio OFF -> Mono (1ch)
             const channels = isSystemAudioShared ? 2 : 1;
             currentChannelsRef.current = channels;
 
-            let wsUrl = WS_URL + `?translate=true&summary=true&channels=${channels}`;
+            // [Fix] AudioWorklet에서 다운샘플링 수행하므로 항상 16kHz로 전송
+            const transmitSampleRate = AUDIO_CONFIG.sampleRate; // 16000Hz
+
+            let wsUrl = WS_URL + `?translate=true&summary=true&channels=${channels}&sampleRate=${transmitSampleRate}`;
             if (meetingId) {
                 wsUrl += `&meetingId=${meetingId}`;
             }
-
-            console.log(`WebSocket 연결 시도 (Channels: ${channels}, MeetingID: ${meetingId}):`, wsUrl);
+            
+            // 참여자 이름을 키워드 부스팅용 파라미터로 추가
+            if (participants && participants.trim()) {
+                wsUrl += `&participants=${encodeURIComponent(participants)}`;
+                console.log(`키워드 부스팅 활성화 - 참여자: ${participants}`);
+            }
+            
+            console.log(`WebSocket 연결 시도 (Channels: ${channels}, SampleRate: ${transmitSampleRate}Hz [Downsampled], MeetingID: ${meetingId}):`, wsUrl);
             console.log("환경변수 API_URL:", process.env.NEXT_PUBLIC_API_URL);
 
             const ws = new WebSocket(wsUrl);
@@ -681,11 +743,9 @@ const useRealtimeStream = (): RealtimeStreamControls => {
             if (isSystemAudioShared) {
                 console.log("시스템 오디오 공유 모드: AudioWorklet(Stereo) 설정 시작");
                 
-                // [Optimization] AudioContext를 미리 생성/재개하여 사용자 제스처 컨텍스트 활용 시도
-                if (!audioContextRef.current) {
-                    audioContextRef.current = new AudioContext({ sampleRate: AUDIO_CONFIG.sampleRate });
-                }
-                if (audioContextRef.current.state === 'suspended') {
+                // [Optimization] AudioContext 상태 확인 및 재개
+                // AudioContext는 이미 startRecording 초반에 생성되었음
+                if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
                     await audioContextRef.current.resume().catch(e => console.warn("AudioContext resume failed:", e));
                 }
 
@@ -742,10 +802,19 @@ const useRealtimeStream = (): RealtimeStreamControls => {
 
         console.log("녹음 일시정지");
         try {
-            // 백엔드에 일시정지 상태 알림
+            // 백엔드에 일시정지 상태 알림 (채널별 + 글로벌)
             if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                 wsRef.current.send(JSON.stringify({ command: "SET_PAUSED", value: true }));
-                console.log("일시정지 제어 메시지 전송");
+                wsRef.current.send(JSON.stringify({ command: "SET_PAUSED_MIC", value: true }));
+                wsRef.current.send(JSON.stringify({ command: "SET_PAUSED_SYSTEM", value: true }));
+                console.log("일시정지 제어 메시지 전송 (채널별 + 글로벌)");
+            }
+
+            // AudioWorklet에 채널별 일시정지 알림
+            if (stereoNodeRef.current) {
+                stereoNodeRef.current.port.postMessage({ type: 'setPausedMic', value: true });
+                stereoNodeRef.current.port.postMessage({ type: 'setPausedSystem', value: true });
+                console.log("Worklet에 채널별 일시정지 메시지 전송");
             }
 
             vadPause();
@@ -765,10 +834,19 @@ const useRealtimeStream = (): RealtimeStreamControls => {
 
         console.log("녹음 재개");
         try {
-            // 백엔드에 재개 상태 알림
+            // 백엔드에 재개 상태 알림 (채널별 + 글로벌)
             if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                 wsRef.current.send(JSON.stringify({ command: "SET_PAUSED", value: false }));
-                console.log("재개 제어 메시지 전송");
+                wsRef.current.send(JSON.stringify({ command: "SET_PAUSED_MIC", value: false }));
+                wsRef.current.send(JSON.stringify({ command: "SET_PAUSED_SYSTEM", value: false }));
+                console.log("재개 제어 메시지 전송 (채널별 + 글로벌)");
+            }
+
+            // AudioWorklet에 채널별 재개 알림
+            if (stereoNodeRef.current) {
+                stereoNodeRef.current.port.postMessage({ type: 'setPausedMic', value: false });
+                stereoNodeRef.current.port.postMessage({ type: 'setPausedSystem', value: false });
+                console.log("Worklet에 채널별 재개 메시지 전송");
             }
 
             vadStart();

@@ -6,6 +6,10 @@ class StereoProcessor extends AudioWorkletProcessor {
         this.frameCounter = 0;
         this.alwaysSendMic = false; // 기본값: 게이팅 적용
         
+        // 채널별 일시정지 상태
+        this.pausedMic = false;
+        this.pausedSystem = false;
+        
         // 버퍼링 설정
         this.BUFFER_SIZE = 4096; // 약 85ms @ 48kHz
         this.buffer = new Int16Array(this.BUFFER_SIZE * 2); // Stereo
@@ -22,6 +26,12 @@ class StereoProcessor extends AudioWorkletProcessor {
             } else if (event.data.type === 'setAlwaysSendMic') {
                 this.alwaysSendMic = !!event.data.value;
                 console.log('[StereoProcessor] alwaysSendMic set to', this.alwaysSendMic);
+            } else if (event.data.type === 'setPausedMic') {
+                this.pausedMic = !!event.data.value;
+                console.log('[StereoProcessor] pausedMic set to', this.pausedMic);
+            } else if (event.data.type === 'setPausedSystem') {
+                this.pausedSystem = !!event.data.value;
+                console.log('[StereoProcessor] pausedSystem set to', this.pausedSystem);
             }
         };
     }
@@ -64,14 +74,14 @@ class StereoProcessor extends AudioWorkletProcessor {
         const inputLength = left ? left.length : (right ? right.length : 128);
         
         for (let i = 0; i < inputLength; i++) {
-            // 마이크 채널 (Left) - VAD 게이팅 적용
+            // 마이크 채널 (Left) - VAD 게이팅 및 일시정지 적용
             // left가 없으면 0 (무음)
             let micRaw = left ? left[i] : 0;
-            let micSample = (this.micEnabled || this.alwaysSendMic) ? micRaw : 0;
+            let micSample = (this.micEnabled || this.alwaysSendMic) && !this.pausedMic ? micRaw : 0;
             
-            // 시스템 채널 (Right) - 게이팅 없이 항상 통과
+            // 시스템 채널 (Right) - 일시정지 적용
             // right가 없으면 0 (무음)
-            let sysSample = right ? right[i] : 0;
+            let sysSample = right && !this.pausedSystem ? right[i] : 0;
 
             // Float32 -> Int16 변환
             micSample = Math.max(-1, Math.min(1, micSample));

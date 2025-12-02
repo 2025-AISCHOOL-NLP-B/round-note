@@ -6,6 +6,7 @@
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 import { handleAuthResponse } from '@/utils/auth';
+import { Template } from '../settings/TemplateSettings';
 
 // 공통 헤더 생성 (httpOnly Cookie 사용)
 const getHeaders = (): HeadersInit => {
@@ -142,9 +143,17 @@ export const getFullReport = async (meetingId: string): Promise<FullReportRespon
 /**
  * 요약 및 액션 아이템 재생성 (LLM 호출)
  */
-export const regenerateSummary = async (meetingId: string): Promise<RegenerateResponse> => {
+export const regenerateSummary = async (
+  meetingId: string, 
+  template?: Template
+): Promise<RegenerateResponse> => {
+  const body = template ? { template } : {};
+  
   const response = await fetch(`${API_URL}/api/v1/reports/${meetingId}/regenerate`, 
-    getFetchOptions({ method: 'POST' })
+    getFetchOptions({ 
+      method: 'POST',
+      body: JSON.stringify(body)
+    })
   );
 
   await handleAuthResponse(response);

@@ -234,8 +234,55 @@ def update_meeting(
         meeting=db_meeting,
         meeting_in=meeting_update
     )
-    
-    return updated_meeting
+    # 최신 관계 로드 (summary, action_items)
+    from sqlalchemy.orm import joinedload
+    refreshed = db.query(models.Meeting).options(
+        joinedload(models.Meeting.summaries),
+        joinedload(models.Meeting.action_items)
+    ).filter(models.Meeting.MEETING_ID == updated_meeting.MEETING_ID).first()
+
+    # dict로 변환하여 스키마에 맞게 반환
+    meeting_dict = {
+        "meeting_id": refreshed.MEETING_ID,
+        "creator_id": refreshed.CREATOR_ID,
+        "title": refreshed.TITLE,
+        "purpose": refreshed.PURPOSE,
+        "start_dt": refreshed.START_DT,
+        "end_dt": refreshed.END_DT,
+        "location": refreshed.LOCATION,
+        "content": refreshed.CONTENT,
+        "translated_content": refreshed.TRANSLATED_CONTENT,
+        "ai_summary": refreshed.AI_SUMMARY,
+        "participants": refreshed.PARTICIPANTS,
+        "key_decisions": refreshed.KEY_DECISIONS,
+        "next_steps": refreshed.NEXT_STEPS,
+        "audio_url": refreshed.AUDIO_URL,
+        "summary": {
+            "summary_id": refreshed.summaries[0].SUMMARY_ID,
+            "content": refreshed.summaries[0].CONTENT,
+            "translated_content": refreshed.summaries[0].TRANSLATED_CONTENT,
+            "format": refreshed.summaries[0].FORMAT,
+            "created_dt": refreshed.summaries[0].CREATED_DT
+        } if refreshed.summaries else None,
+        "action_items": [
+            {
+                "item_id": item.ITEM_ID,
+                "title": item.TITLE,
+                "description": item.DESCRIPTION,
+                "status": item.STATUS,
+                "priority": item.PRIORITY,
+                "assignee_id": item.ASSIGNEE_ID,
+                "assignee_name": item.ASSIGNEE_NAME,
+                "jira_assignee_id": item.JIRA_ASSIGNEE_ID,
+                "due_dt": item.DUE_DT,
+                "created_dt": item.CREATED_DT,
+                "updated_dt": item.UPDATED_DT
+            }
+            for item in refreshed.action_items
+        ] if refreshed.action_items else []
+    }
+
+    return meeting_dict
 
 # ==================== 5. 회의 삭제 ====================
 @router.delete("/{meeting_id}", status_code=status.HTTP_204_NO_CONTENT)

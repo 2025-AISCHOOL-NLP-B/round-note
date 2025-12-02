@@ -62,6 +62,7 @@ import {
 import { toast } from 'sonner';
 import { createMeeting, endMeeting } from '@/features/meetings/meetingsService';
 import { regenerateSummary } from '@/features/meetings/reportsService';
+import { getActiveTemplate } from '@/features/settings/templateUtils';
 import { fetchWithAuth } from '@/utils/auth';
 import type { Meeting } from "@/features/dashboard/Dashboard";
 
@@ -115,8 +116,9 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
   const [activeTab, setActiveTab] = useState<'transcribe' | 'summary'>('transcribe');
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const [realtimeSummary, setRealtimeSummary] = useState<string>('');
-  const contentEndRef = useRef<HTMLDivElement>(null);
+  const [localParticipants, setLocalParticipants] = useState(meetingInfo.participants || '');
   const summaryEndRef = useRef<HTMLDivElement>(null);
+  const contentEndRef = useRef<HTMLDivElement>(null);
   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const summaryIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -337,17 +339,18 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
     } else {
       try {
         // 1) 회의 미리 생성 (is_realtime 플래그)
-        let created;
+        let createdMeetingId: string | undefined;
         try {
-          created = await createMeeting({ title: editableTitle || generateDefaultTitle(meetings), purpose: meetingInfo.purpose, is_realtime: true });
+          const created = await createMeeting({ title: editableTitle || generateDefaultTitle(meetings), purpose: meetingInfo.purpose, is_realtime: true });
+          createdMeetingId = created.meeting_id;
           setCurrentMeetingId(created.meeting_id);
         } catch (e) {
           console.error('Failed to create meeting before recording:', e);
           toast.error('회의 생성에 실패했습니다. 네트워크 상태를 확인해주세요.');
           return;
         }
-        // 2) 녹음 시작 (생성된 회의 ID 전달)
-        await startRecording(created.meeting_id);
+        // 2) 녹음 시작 (meetingId + 참여자 이름을 키워드 부스팅에 전달)
+        await startRecording(createdMeetingId, localParticipants);
         startAudioRecording();
         setRecordingTime(0);
         toast.success('녹음이 시작되었습니다.');
@@ -474,8 +477,22 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
       } else {
         // 1) 회의 종료/내용 저장
         await endMeeting(currentMeetingId, { status: 'COMPLETED', ended_at: new Date().toISOString(), content });
-        // 2) 요약 재생성
-        const regen = await regenerateSummary(currentMeetingId);
+        
+        // 2) 현재 선택된 템플릿 가져오기
+        const activeTemplate = getActiveTemplate();
+        const templateData = activeTemplate ? {
+          id: activeTemplate.id,
+          name: activeTemplate.name,
+          description: activeTemplate.description || '',
+          sections: activeTemplate.sections.map(s => ({
+            id: s.id,
+            title: s.title,
+            placeholder: s.placeholder
+          }))
+        } : undefined;
+        
+        // 3) 요약 재생성 (템플릿 적용)
+        const regen = await regenerateSummary(currentMeetingId, templateData);
         // 3) UI 반영
         setAiAnalysis({ summary: regen.summary, actionItems: regen.action_items_count });
         toast.success('회의록이 저장되고 AI 요약이 생성되었습니다.');
@@ -653,6 +670,26 @@ export function MeetingContentInput({ meetingInfo, onComplete, onBack, meetings 
           {/* 실시간 전사 탭 */}
           {activeTab === 'transcribe' && (
             <div>
+              {/* 참여자 입력 (녹취 시작 전에만 표시) */}
+              {!isRecording && (
+                <div className="mb-4 max-w-md mx-auto">
+                  <label htmlFor="participants" className="flex items-center gap-2 text-sm font-medium text-slate-700 mb-2">
+                    <Users className="w-4 h-4" />
+                    회의 참여자 (키워드 부스팅)
+                  </label>
+                  <Input
+                    id="participants"
+                    value={localParticipants}
+                    onChange={(e) => setLocalParticipants(e.target.value)}
+                    placeholder="예: 김철수, 이영희, 박민수 (쉼표로 구분)"
+                    className="text-center"
+                  />
+                  <p className="text-xs text-slate-500 mt-1 text-center">
+                    참여자 이름을 입력하면 음성 인식률이 향상됩니다
+                  </p>
+                </div>
+              )}
+              
               {/* 녹취 컨트롤 버튼 */}
               <div className="mb-4 flex gap-2 justify-center">
                 <Button
