@@ -257,18 +257,16 @@ export function MeetingChatbotLLM({ meeting, useBackendAPI = true }: MeetingChat
             {messages.map((message) => (
               <div
                 key={message.id}
-                className={`flex gap-3 ${
-                  message.role === 'user' ? 'flex-row-reverse' : ''
-                }`}
+                className={`flex gap-3 ${message.role === 'user' ? 'flex-row-reverse' : ''
+                  }`}
               >
                 <div
-                  className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-                    message.role === 'user'
-                      ? 'bg-blue-600'
-                      : message.isError
+                  className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${message.role === 'user'
+                    ? 'bg-blue-600'
+                    : message.isError
                       ? 'bg-orange-500'
                       : 'bg-purple-600'
-                  }`}
+                    }`}
                 >
                   {message.role === 'user' ? (
                     <UserIcon className="w-4 h-4 text-white" />
@@ -277,23 +275,21 @@ export function MeetingChatbotLLM({ meeting, useBackendAPI = true }: MeetingChat
                   )}
                 </div>
                 <div
-                  className={`flex-1 max-w-[80%] rounded-lg p-3 ${
-                    message.role === 'user'
-                      ? 'bg-blue-600 text-white'
-                      : message.isError
+                  className={`w-fit max-w-[80%] rounded-lg p-3 ${message.role === 'user'
+                    ? 'bg-blue-600 text-white'
+                    : message.isError
                       ? 'bg-orange-50 text-gray-900 border border-orange-200'
                       : 'bg-gray-100 text-gray-900'
-                  }`}
+                    }`}
                 >
                   <p className="whitespace-pre-wrap break-words">
                     {message.content}
                   </p>
                   <p
-                    className={`text-xs mt-1 ${
-                      message.role === 'user'
-                        ? 'text-blue-100'
-                        : 'text-gray-500'
-                    }`}
+                    className={`text-xs mt-1 ${message.role === 'user'
+                      ? 'text-blue-100'
+                      : 'text-gray-500'
+                      }`}
                   >
                     {message.timestamp.toLocaleTimeString('ko-KR', {
                       hour: '2-digit',

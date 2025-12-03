@@ -381,6 +381,74 @@ Keep it concise (3-5 bullet points) focusing on actionable information."""
                 "action_items": []
             }
 
+    async def generate_meeting_metadata(self, content: str) -> dict:
+        """
+        회의 내용을 기반으로 제목과 목적을 자동 생성
+        
+        Args:
+            content: 회의 전사 텍스트
+            
+        Returns:
+            dict: {
+                "title": "자동 생성된 제목",
+                "purpose": "자동 생성된 목적"
+            }
+        """
+        if not content or not content.strip():
+            return {
+                "title": "",
+                "purpose": ""
+            }
+        
+        try:
+            chat_completion = await self.client.chat.completions.create(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": """You are an expert meeting analyst. Analyze the meeting transcript and extract:
+1. A concise meeting title (5-10 words)
+2. The meeting purpose/objective (1-2 sentences)
+
+Return ONLY a JSON object with this exact format:
+{
+    "title": "회의 제목",
+    "purpose": "회의 목적"
+}
+
+Rules:
+- Title should be professional and capture the main topic
+- Purpose should be a clear, concise summary of why the meeting was held
+- Both should be in Korean
+- Do NOT include timestamps or speaker names
+- Focus on the actual content and key discussion points"""
+                    },
+                    {
+                        "role": "user",
+                        "content": f"다음 회의 전사 내용을 분석하여 제목과 목적을 생성해주세요:\n\n{content[:3000]}"
+                    }
+                ],
+                model="gpt-4o-mini",
+                temperature=0.3,
+                max_tokens=300,
+                response_format={"type": "json_object"}
+            )
+            
+            result_text = chat_completion.choices[0].message.content.strip()
+            result = json.loads(result_text)
+            
+            return {
+                "title": result.get("title", "").strip(),
+                "purpose": result.get("purpose", "").strip()
+            }
+            
+        except Exception as e:
+            print(f"LLM generate_meeting_metadata Error: {e}")
+            return {
+                "title": "",
+                "purpose": ""
+            }
+
+
 
 # ============================================
 # 테스트 코드

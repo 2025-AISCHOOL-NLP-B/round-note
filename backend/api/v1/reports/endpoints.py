@@ -419,9 +419,13 @@ async def get_full_report(
 # ============================================
 # 4. 요약 재생성 (LLM 서비스 사용) ⭐
 # ============================================
+class RegenerateRequest(BaseModel):
+    content: str = None
+
 @router.post("/{meeting_id}/regenerate")
 async def regenerate_summary(
     meeting_id: str,
+    request: RegenerateRequest = None,
     db: Session = Depends(get_db)
 ):
     """
@@ -449,7 +453,8 @@ async def regenerate_summary(
         )
     
     # 전사 텍스트 확인
-    if not meeting.CONTENT:
+    content = request.content if request and request.content else meeting.CONTENT
+    if not content:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No transcript found for meeting {meeting_id}. Complete the meeting first."
@@ -461,10 +466,13 @@ async def regenerate_summary(
         
         # 전사 텍스트를 리스트로 변환 (청크 단위)
         # CONTENT가 하나의 큰 텍스트라고 가정
-        transcript_texts = [meeting.CONTENT]
+        transcript_texts = [content]
         
         # LLM으로 요약 및 액션 아이템 생성
         result = await llm_service.get_summary_and_actions(transcript_texts)
+        
+        # 제목과 목적 자동 생성
+        metadata = await llm_service.generate_meeting_metadata(content)
         
         # === 요약 업데이트/생성 ===
         summary = db.query(models.Summary).filter(
@@ -524,7 +532,9 @@ async def regenerate_summary(
             "message": "Summary and action items regenerated successfully",
             "meeting_id": meeting_id,
             "summary": result["rolling_summary"],
-            "action_items_count": len(result["action_items"])
+            "action_items_count": len(result["action_items"]),
+            "title": metadata.get("title", ""),
+            "purpose": metadata.get("purpose", "")
         }
         
     except Exception as e:
