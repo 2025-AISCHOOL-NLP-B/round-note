@@ -86,53 +86,50 @@ export function Dashboard() {
     localStorage.setItem("dashboard_active_section", activeSection);
   }, [activeSection]);
 
-  useEffect(() => {
-    const fetchMeetings = async () => {
-      try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/meetings/`, {
-          method: 'GET',
-          credentials: 'include', // httpOnly Cookie 전송
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          console.log('[Dashboard] Fetched meetings from backend:', data);
-
-          const mappedMeetings: Meeting[] = data.map((m: any) => ({
-            id: m.meeting_id,
-            title: m.title || '제목 없음',
-            date: m.start_dt?.split('T')[0] || new Date().toISOString().split('T')[0],
-            content: m.content || '',
-            summary: m.summary?.content || m.ai_summary || m.purpose || '',
-            actionItems: (m.action_items || []).map((item: any) => ({
-              id: item.item_id,
-              item_id: item.item_id,
-              text: item.title || item.description || '',
-              title: item.title,
-              description: item.description,
-              assignee: item.assignee_name || '미지정',
-              dueDate: item.due_dt ? new Date(item.due_dt).toISOString().split('T')[0] : '',
-              due_date: item.due_dt,
-              completed: item.status === 'DONE',
-              priority: item.priority?.toLowerCase() || 'medium',
-              jira_assignee_id: item.jira_assignee_id
-            })),
-            createdAt: m.start_dt || new Date().toISOString(),
-            updatedAt: m.end_dt || new Date().toISOString(),
-            participants: m.participants || [],
-            keyDecisions: m.key_decisions || [],
-            nextSteps: m.next_steps || [],
-            audioUrl: m.audio_url || ''
-          }));
-
-          setMeetings(mappedMeetings);
-        }
-      } catch (error) {
-        console.error('Failed to fetch meetings:', error);
+  const refreshMeetings = async () => {
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/meetings/`, {
+        method: 'GET',
+        credentials: 'include',
+      });
+      if (response.ok) {
+        const data = await response.json();
+        console.log('[Dashboard] Fetched meetings from backend:', data);
+        const mappedMeetings: Meeting[] = data.map((m: any) => ({
+          id: m.meeting_id,
+          title: m.title || '제목 없음',
+          date: m.start_dt?.split('T')[0] || new Date().toISOString().split('T')[0],
+          content: m.content || '',
+          summary: m.summary?.content || m.ai_summary || m.purpose || '',
+          actionItems: (m.action_items || []).map((item: any) => ({
+            id: item.item_id,
+            item_id: item.item_id,
+            text: item.title || item.description || '',
+            title: item.title,
+            description: item.description,
+            assignee: item.assignee_name || '미지정',
+            dueDate: item.due_dt ? new Date(item.due_dt).toISOString().split('T')[0] : '',
+            due_date: item.due_dt,
+            completed: item.status === 'DONE',
+            priority: item.priority?.toLowerCase() || 'medium',
+            jira_assignee_id: item.jira_assignee_id
+          })),
+          createdAt: m.start_dt || new Date().toISOString(),
+          updatedAt: m.end_dt || new Date().toISOString(),
+          participants: m.participants || [],
+          keyDecisions: m.key_decisions || [],
+          nextSteps: m.next_steps || [],
+          audioUrl: m.audio_url || ''
+        }));
+        setMeetings(mappedMeetings);
       }
-    };
+    } catch (error) {
+      console.error('Failed to fetch meetings:', error);
+    }
+  };
 
-    fetchMeetings();
+  useEffect(() => {
+    refreshMeetings();
   }, []);
 
   // Initialize notification checker
@@ -171,8 +168,7 @@ export function Dashboard() {
 
       if (response.ok) {
         // 성공 시 프론트엔드 상태 업데이트
-        const newMeetings = meetings.filter((m) => m.id !== id);
-        setMeetings(newMeetings);
+        setMeetings((prev) => prev.filter((m) => m.id !== id));
       } else {
         console.error('Failed to delete meeting:', await response.text());
         alert('회의록 삭제에 실패했습니다.');
@@ -449,6 +445,7 @@ export function Dashboard() {
             meetings={meetings}
             onUpdateMeeting={handleUpdateMeeting}
             onDeleteMeeting={handleDeleteMeeting}
+            onRefreshMeetings={refreshMeetings}
           />
         );
 
