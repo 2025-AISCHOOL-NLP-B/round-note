@@ -6,8 +6,39 @@ import { Search, Calendar, Clock, Check, Send, Bot, User as UserIcon, CheckSquar
 import type { Meeting } from '@/features/dashboard/Dashboard';
 import { fetchWithAuth, handleAuthResponse } from '@/utils/auth';
 import { getQuickQuestions, type QuickQuestion } from '@/features/meetings/reportsService';
+import ReactMarkdown from 'react-markdown';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+// LLM 응답 정규화 함수
+function normalizeMarkdown(text: string): string {
+    let normalized = text;
+
+    // 1. 이모지 뒤 2줄 개행
+    normalized = normalized.replace(/(📌|📋|✨)\s*(\*\*[^*]+\*\*)/g, '$1 $2\n\n');
+
+    // 2. **제목** 뒤 2줄 개행 (콜론 포함/미포함)
+    normalized = normalized.replace(/(\*\*[^*]+\*\*):?\s*(?!-|\d\.|\n)/g, '$1\n\n');
+
+    // 3. 문장 연결부 개행 (접속사 등) - 문단 구분
+    normalized = normalized.replace(/(\.)\s+(특히|따라서|또한|그리고|하지만|그런데|그러므로|요약하면)/g, '$1\n\n$2');
+
+    // 4. 숫자 리스트 패턴 정규화 (가장 중요: "글자1." -> "글자\n1.")
+    // 숫자가 아닌 문자 뒤에 숫자가 붙어있는 경우 처리 (공백 포함)
+    normalized = normalized.replace(/([^\d\n])\s*(\d+\.\s)/g, '$1\n$2');
+
+    // 5. 콜론(:) 뒤에 바로 오는 숫자 리스트
+    normalized = normalized.replace(/(:)\s*(\d+\.)/g, '$1\n\n$2');
+
+    // 6. 리스트 항목 앞에 개행 추가 (보완)
+    normalized = normalized.replace(/([^\n])\s*(-\s)/g, '$1\n$2');
+
+    // 7. 연속된 개행 3개 이상을 2개로 정리
+    normalized = normalized.replace(/\n{3,}/g, '\n\n');
+
+    return normalized.trim();
+}
+
 
 interface Message {
     id: string;
@@ -208,10 +239,10 @@ export function MeetingChatbotPage({ meetings }: MeetingChatbotPageProps) {
                             }
                             fullText += data;
 
-                            // 실시간으로 메시지 업데이트
+                            // 실시간으로 메시지 업데이트 (정규화 적용)
                             setMessages(prev => prev.map(msg =>
                                 msg.id === messageId
-                                    ? { ...msg, content: fullText }
+                                    ? { ...msg, content: normalizeMarkdown(fullText) }
                                     : msg
                             ));
                         }
@@ -494,9 +525,27 @@ export function MeetingChatbotPage({ meetings }: MeetingChatbotPageProps) {
                                                         : 'bg-gray-100 text-gray-900'
                                                     }`}
                                             >
-                                                <p className="whitespace-pre-wrap break-words">
+                                                <ReactMarkdown
+                                                    components={{
+                                                        p: ({ node, ...props }) => (
+                                                            <p className="mb-2 whitespace-pre-wrap break-words" {...props} />
+                                                        ),
+                                                        strong: ({ node, ...props }) => (
+                                                            <strong className="font-bold" {...props} />
+                                                        ),
+                                                        ul: ({ node, ...props }) => (
+                                                            <ul className="list-disc ml-4 mb-2" {...props} />
+                                                        ),
+                                                        ol: ({ node, ...props }) => (
+                                                            <ol className="list-decimal ml-4 mb-2" {...props} />
+                                                        ),
+                                                        li: ({ node, ...props }) => (
+                                                            <li className="mb-1" {...props} />
+                                                        ),
+                                                    }}
+                                                >
                                                     {message.content}
-                                                </p>
+                                                </ReactMarkdown>
                                                 <p
                                                     className={`text-xs mt-1 ${message.role === 'user'
                                                         ? 'text-blue-100'
