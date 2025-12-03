@@ -431,6 +431,7 @@ export function MeetingContentInput({ meetingInfo, meetingMode, onComplete, onBa
     const recordedAudioBlob = await finalizeAudioRecording();
 
     // 백엔드에 전사 내용 저장 후 요약 재생성 호출
+    let regen: any = null;
     try {
       if (!currentMeetingId) {
         toast.error('회의 식별자가 없습니다. 녹음을 시작할 때 회의를 생성하지 못했습니다.');
@@ -452,7 +453,7 @@ export function MeetingContentInput({ meetingInfo, meetingMode, onComplete, onBa
         } : undefined;
 
         // 3) 요약 재생성 (템플릿 적용)
-        const regen = await regenerateSummary(currentMeetingId, templateData);
+        regen = await regenerateSummary(currentMeetingId, templateData);
         toast.success('회의록이 저장되었습니다.');
       }
     } catch (err) {
@@ -462,7 +463,7 @@ export function MeetingContentInput({ meetingInfo, meetingMode, onComplete, onBa
 
     // 최종 UI 정리
     setTimeout(() => {
-      onComplete(content, { audioBlob: recordedAudioBlob }, currentMeetingId);
+      onComplete(content, { audioBlob: recordedAudioBlob, ...regen }, currentMeetingId);
       setContent('');
       // Reset audio chunks for next recording
       audioChunksRef.current = [];

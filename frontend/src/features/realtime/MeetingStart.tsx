@@ -478,9 +478,21 @@ export function MeetingStart({ meetings, onAddMeeting, meetingMode }: MeetingSta
       const summaryFirstLine = aiAnalysis.summary.split("\n")[0].trim();
       return summaryFirstLine.substring(0, 100);
     }
-    // 회의 내용 첫 10문장 요약
+    // 회의 내용 첫 10문장 요약 (타임스탬프/화자 정보 제거)
     if (!transcribedContent.trim()) return '';
-    const sentences = transcribedContent
+
+    // 1. 타임스탬프와 화자 정보 제거
+    const cleanText = transcribedContent
+      .split('\n')
+      .map(line => {
+        // [시간] Speaker X 형식 제거
+        return line.replace(/^\[.*?\]\s*Speaker\s*\d+\s*/g, '').trim();
+      })
+      .filter(line => line.length > 0)
+      .join(' ');
+
+    // 2. 문장 단위로 분리 및 필터링
+    const sentences = cleanText
       .split(/[.!?]\s+/)
       .map(s => s.trim())
       .filter(s =>

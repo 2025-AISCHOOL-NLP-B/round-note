@@ -487,7 +487,7 @@ export function MeetingChatbotPage({ meetings }: MeetingChatbotPageProps) {
                                                 </div>
                                             )}
                                             <div
-                                                className={`flex-1 max-w-[80%] rounded-lg p-3 ${message.role === 'user'
+                                                className={`w-fit max-w-[80%] rounded-lg p-3 ${message.role === 'user'
                                                     ? 'bg-blue-600 text-white'
                                                     : message.role === 'system'
                                                         ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200'
