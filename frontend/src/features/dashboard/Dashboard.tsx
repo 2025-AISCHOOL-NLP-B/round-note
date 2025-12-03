@@ -209,7 +209,7 @@ export function Dashboard() {
           실시간 음성 인식으로 회의를 기록하고 자동으로 요약과 액션
           아이템을 추출하세요
         </p>
-        
+
         {!showModeSelect ? (
           <Button
             onClick={() => setShowModeSelect(true)}
@@ -221,7 +221,7 @@ export function Dashboard() {
         ) : (
           <div className="space-y-3 bg-white rounded-xl p-4">
             <div className="text-sm font-semibold text-slate-700 mb-3">회의 모드를 선택하세요</div>
-            
+
             {/* 화상회의 / 오프라인 토글 */}
             <div className="border rounded-lg p-3 bg-slate-50">
               <div className="flex items-center justify-between">
