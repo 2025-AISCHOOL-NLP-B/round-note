@@ -10,6 +10,42 @@ import {
   type ChatMessage as ApiChatMessage,
   type QuickQuestion
 } from '@/features/meetings/reportsService';
+import ReactMarkdown from 'react-markdown';
+
+
+
+// LLM 응답 정규화 함수: 이모지/제목 뒤 개행 추가
+function normalizeMarkdown(text: string): string {
+  console.log('🔍 normalizeMarkdown 호출됨. 원본:', text.substring(0, 150));
+  let normalized = text;
+
+  // 1. 이모지 뒤 2줄 개행
+  normalized = normalized.replace(/(📌|📋|✨)\s*(\*\*[^*]+\*\*)/g, '$1 $2\n\n');
+
+  // 2. **제목** 뒤 2줄 개행 (콜론 포함/미포함 모두 처리)
+  normalized = normalized.replace(/(\*\*[^*]+\*\*):?\s*(?!-|\d\.|\n)/g, '$1\n\n');
+
+  // 3. 콜론(:) 뒤에 바로 오는 숫자 리스트 (예: "같아요:1." → "같아요:\n1.")
+  normalized = normalized.replace(/(:)\s*(\d+\.)/g, '$1\n\n$2');
+
+  // 4. 문장 끝 뒤 숫자 리스트 (예: "같아요.1." → "같아요.\n1.")
+  normalized = normalized.replace(/([.?!])\s*(\d+\.)/g, '$1\n\n$2');
+
+  // 5. 리스트 항목 앞에 개행 추가 (일반적인 경우)
+  normalized = normalized.replace(/([^\n:])\s*(\d+\.\s+\*\*)/g, '$1\n\n$2');
+
+  // 6. 대시(-) 리스트 앞 개행
+  normalized = normalized.replace(/([^\n])\s+(-\s+)/g, '$1\n$2');
+
+  // 7. 연속된 개행 3개 이상을 2개로 정리
+  normalized = normalized.replace(/\n{3,}/g, '\n\n');
+
+
+  console.log('✅ normalizeMarkdown 완료. 결과:', normalized.substring(0, 150));
+  return normalized.trim();
+}
+
+
 
 interface Message {
   id: string;
@@ -177,7 +213,7 @@ export function MeetingChatbotLLM({ meeting, useBackendAPI = true }: MeetingChat
         const assistantMessage: Message = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: response.answer,
+          content: normalizeMarkdown(response.answer),  // 정규화 적용
           timestamp: new Date(),
         };
 
@@ -282,9 +318,50 @@ export function MeetingChatbotLLM({ meeting, useBackendAPI = true }: MeetingChat
                       : 'bg-gray-100 text-gray-900'
                     }`}
                 >
-                  <p className="whitespace-pre-wrap break-words">
-                    {message.content}
-                  </p>
+                  <div className="markdown-content text-sm">
+                    <ReactMarkdown
+                      components={{
+                        // 문단: 개행이 제대로 표시되도록 설정
+                        p: ({ node, ...props }) => (
+                          <p className="mb-3 whitespace-pre-wrap break-words leading-relaxed" {...props} />
+                        ),
+                        // 제목 2 (## 또는 **굵은 텍스트**)
+                        h2: ({ node, ...props }) => (
+                          <h2 className="text-base font-bold mt-4 mb-2 text-gray-900" {...props} />
+                        ),
+                        // 제목 3
+                        h3: ({ node, ...props }) => (
+                          <h3 className="text-sm font-semibold mt-3 mb-2 text-gray-800" {...props} />
+                        ),
+                        // 순서 없는 리스트
+                        ul: ({ node, ...props }) => (
+                          <ul className="list-disc ml-6 mb-3 space-y-1.5" {...props} />
+                        ),
+                        // 순서 있는 리스트
+                        ol: ({ node, ...props }) => (
+                          <ol className="list-decimal ml-6 mb-3 space-y-1.5" {...props} />
+                        ),
+                        // 리스트 아이템
+                        li: ({ node, ...props }) => (
+                          <li className="whitespace-pre-wrap break-words leading-relaxed pl-1" {...props} />
+                        ),
+                        // 굵은 텍스트
+                        strong: ({ node, ...props }) => (
+                          <strong className="font-bold text-gray-900" {...props} />
+                        ),
+                        // 코드 블록
+                        code: ({ node, ...props }) => (
+                          <code className="bg-gray-200 px-1.5 py-0.5 rounded text-xs font-mono" {...props} />
+                        ),
+                        // 줄바꿈
+                        br: ({ node, ...props }) => (
+                          <br className="my-1" {...props} />
+                        ),
+                      }}
+                    >
+                      {message.content}
+                    </ReactMarkdown>
+                  </div>
                   <p
                     className={`text-xs mt-1 ${message.role === 'user'
                       ? 'text-blue-100'
