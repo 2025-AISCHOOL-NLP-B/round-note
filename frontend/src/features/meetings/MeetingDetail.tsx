@@ -300,22 +300,9 @@ export function MeetingDetail({
 
   const handleDelete = async () => {
     if (confirm('정말로 이 회의록을 삭제하시겠습니까?')) {
-      try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/meetings/${meeting.id}`, {
-          method: 'DELETE',
-          credentials: 'include', // httpOnly Cookie 전송
-        });
-
-        if (response.ok) {
-          onDeleteMeeting(meeting.id);
-          onClose();
-        } else {
-          alert('회의록 삭제에 실패했습니다.');
-        }
-      } catch (error) {
-        console.error('Failed to delete meeting:', error);
-        alert('회의록 삭제 중 오류가 발생했습니다.');
-      }
+      // Dashboard의 handleDeleteMeeting이 백엔드 호출과 상태 업데이트를 모두 처리
+      await onDeleteMeeting(meeting.id);
+      onClose();
     }
   };
 

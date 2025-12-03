@@ -29,19 +29,25 @@ export function MeetingList({ meetings, onUpdateMeeting, onDeleteMeeting }: Meet
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
 
-  const handleBulkDelete = () => {
+  const handleBulkDelete = async () => {
     if (selectedIds.length === 0) return;
 
     if (confirm(`${selectedIds.length}개의 회의록을 삭제하시겠습니까?`)) {
-      selectedIds.forEach(id => onDeleteMeeting(id));
+      // 순차적으로 삭제 처리
+      for (const id of selectedIds) {
+        await onDeleteMeeting(id);
+      }
       setSelectedIds([]);
       setIsSelectionMode(false);
     }
   };
-  const handleDeleteAll = () => {
+  const handleDeleteAll = async () => {
     if (meetings.length === 0) return;
 
-    meetings.forEach(meeting => onDeleteMeeting(meeting.id));
+    // 순차적으로 모든 회의록 삭제
+    for (const meeting of meetings) {
+      await onDeleteMeeting(meeting.id);
+    }
     setShowDeleteAllConfirm(false);
   };
 
