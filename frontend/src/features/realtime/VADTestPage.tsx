@@ -53,7 +53,7 @@ function VADTestPage() {
                 {/* 컨트롤 버튼 */}
                 <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
                     <button
-                        onClick={isRecording ? stopRecording : startRecording}
+                        onClick={() => (isRecording ? stopRecording() : startRecording())}
                         disabled={loading}
                         style={{ padding: '10px 20px', fontSize: '16px', cursor: 'pointer', backgroundColor: isRecording ? '#dc3545' : '#28a745', color: 'white', border: 'none', borderRadius: '5px' }}
                     >
