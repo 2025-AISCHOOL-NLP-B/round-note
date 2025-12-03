@@ -91,5 +91,7 @@ docker-compose.override.yml
 
 AUTH_SESSION_MANAGEMENT_GUIDE.md
 MULTICHANNEL_DIAGNOSIS_SUMMARY.md
+ELEVENLABS_INTEGRATION_COMPLETE.md
 analyze_wav_deep.py
 analyze_wav.py
+backend/.env.local

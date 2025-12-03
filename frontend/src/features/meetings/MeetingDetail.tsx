@@ -49,6 +49,8 @@ import {
 } from '../../shared/ui/dropdown-menu';
 import { MeetingAnalysis } from '@/features/realtime/MeetingAnalysis';
 import { ScrollToTop } from '@/features/utils/ScrollToTop';
+import { useMeetingArtifacts } from '@/hooks/useMeetingArtifacts';
+import { TranscriptStatusBanner, TranscriptDisplay } from '@/components/TranscriptStatusBanner';
 import { exportToPDF } from '@/utils/exportPDF';
 import { exportToWord } from '@/utils/exportWord';
 import type { Meeting, ActionItem } from '@/features/dashboard/Dashboard';
@@ -127,6 +129,18 @@ export function MeetingDetail({
   const [isPlaying, setIsPlaying] = useState(false);
   const [audioSrc, setAudioSrc] = useState('');
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+
+  // ElevenLabs 재전사 상태 및 폴링 훅
+  const { 
+    artifacts, 
+    isLoading: isLoadingArtifacts, 
+    error: artifactsError, 
+    startPolling, 
+    stopPolling,
+    refetch: refetchArtifacts 
+  } = useMeetingArtifacts(meeting.id);
+
+  const [isFinalizingTranscript, setIsFinalizingTranscript] = useState(false);
 
   // Set audio src with token on mount and when audioUrl changes
   useEffect(() => {
@@ -306,6 +320,40 @@ export function MeetingDetail({
     }
   };
 
+  const handleFinalizeTranscript = async () => {
+    if (!meeting.audioUrl) {
+      alert('오디오 파일이 없어 재전사를 시작할 수 없습니다.');
+      return;
+    }
+
+    setIsFinalizingTranscript(true);
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiUrl}/api/v1/meetings/${meeting.id}/finalize`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Failed to start transcription' }));
+        console.error('[MeetingDetail] Finalize error:', error);
+        alert(`재전사 시작 실패: ${error.detail || '알 수 없는 오류'}`);
+        return;
+      }
+
+      const result = await response.json();
+      console.log('[MeetingDetail] Finalize started, job_id:', result.job_id);
+      
+      // 폴링 시작
+      startPolling();
+    } catch (error) {
+      console.error('[MeetingDetail] Finalize error:', error);
+      alert('재전사 시작 중 오류가 발생했습니다.');
+    } finally {
+      setIsFinalizingTranscript(false);
+    }
+  };
+
   const handleTranslate = async (text: string, targetLang: string, type: 'summary' | 'content') => {
     // 캐시 확인
     const cacheKey = targetLang;
@@ -446,6 +494,16 @@ export function MeetingDetail({
           
           {/* Desktop Actions */}
           <div className="hidden md:flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleFinalizeTranscript}
+              disabled={isFinalizingTranscript || !meeting.audioUrl}
+              className="gap-2"
+            >
+              <Mic className="w-4 h-4" />
+              {isFinalizingTranscript ? '재전사 중…' : '회의 재전사'}
+            </Button>
             <Button variant="outline" size="sm" onClick={handleExportPDF} className="gap-2">
               <Download className="w-4 h-4" />
               PDF
@@ -499,6 +557,13 @@ export function MeetingDetail({
                   </DropdownMenuItem>
                 </>
               )}
+              <DropdownMenuItem 
+                onClick={handleFinalizeTranscript}
+                disabled={isFinalizingTranscript || !meeting.audioUrl}
+              >
+                <Mic className="w-4 h-4 mr-2" />
+                {isFinalizingTranscript ? '재전사 시작 중...' : '회의 재전사'}
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={handleDelete} className="text-red-600">
                 <Trash2 className="w-4 h-4 mr-2" />
                 회의록 삭제
@@ -594,6 +659,34 @@ export function MeetingDetail({
               <span className="text-sm">오디오 파일</span>
             </Button>
           </div>
+
+          {/* ElevenLabs 재전사 상태 및 결과 */}
+          {artifacts?.final_transcript_status && (
+            <>
+              <TranscriptStatusBanner 
+                status={artifacts.final_transcript_status}
+                error={artifacts.final_transcript_error}
+                onRetry={handleFinalizeTranscript}
+              />
+              
+              {artifacts.final_transcript_status === 'done' && artifacts.final_transcript_text && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Mic className="w-5 h-5" />
+                      최종 전사 원문 (ElevenLabs)
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <TranscriptDisplay 
+                      transcript={artifacts.final_transcript_text}
+                      isLoading={artifacts.final_transcript_status === 'processing' || artifacts.final_transcript_status === 'queued'}
+                    />
+                  </CardContent>
+                </Card>
+              )}
+            </>
+          )}
 
           {/* Meeting Summary */}
           <div ref={summaryRef}>
