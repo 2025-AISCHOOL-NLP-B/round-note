@@ -95,14 +95,14 @@ interface TranscriptDisplayProps {
 function parseTranscriptSegments(transcript: string) {
   if (!transcript) return [];
   
-  // 타임스탬프 패턴 (다양한 언어 지원)
-  // 한국어: [00시 00분 00초], 일본어: [00時00分00秒], 중국어: [00时00分00秒], 기타: [00h00m00s] 등
+  // 타임스탬프 패턴 (다양한 언어 지원) - 더 구체적이고 유연한 패턴
+  // 이들은 [타임스탬프] 스피커/이름 형식을 매칭합니다
   const timestampPatterns = [
-    /^\[(\d{2}時\d{2}分\d{2}秒)\]\s+(.+)$/,  // 일본어: [12時56分03秒]
-    /^\[(\d{2}时\d{2}分\d{2}秒)\]\s+(.+)$/,  // 중국어: [12时56分33秒]
-    /^\[(\d{2}시\s+\d{2}분\s+\d{2}초)\]\s+(.+)$/,  // 한국어: [12시 56분 03초]
-    /^\[(\d{1,2}h\d{1,2}m\d{1,2}s)\]\s+(.+)$/,  // 영어/기타: [12h56m03s]
-    /^\[(\d{2}:\d{2}:\d{2})\]\s+(.+)$/,  // 국제 표준: [12:56:03]
+    /^\[(\d{1,2}時\d{1,2}分\d{1,2}秒)\]\s+(.+?)(?:\s+(.*))?$/,  // 일본어: [12時56分03秒] or [1時5分3秒]
+    /^\[(\d{1,2}时\d{1,2}分\d{1,2}秒)\]\s+(.+?)(?:\s+(.*))?$/,  // 중국어: [12时56分33秒]
+    /^\[(\d{1,2}시\s+\d{1,2}분\s+\d{1,2}초)\]\s+(.+?)(?:\s+(.*))?$/,  // 한국어: [12시 56분 03초] or [1시 5분 3초]
+    /^\[(\d{1,2}:\d{1,2}:\d{1,2})\]\s+(.+?)(?:\s+(.*))?$/,  // 국제 표준: [12:56:03]
+    /^\[(\d{1,2}h\d{1,2}m\d{1,2}s)\]\s+(.+?)(?:\s+(.*))?$/,  // 영어/기타: [12h56m03s]
   ];
 
   // Split by double newlines (segment separator)
@@ -116,18 +116,53 @@ function parseTranscriptSegments(transcript: string) {
     for (const pattern of timestampPatterns) {
       const headerMatch = firstLine?.match(pattern);
       if (headerMatch) {
-        const [, timestamp, speaker] = headerMatch;
-        const text = lines.slice(1).join('\n').trim();
+        const [, timestamp, speaker, extraInfo] = headerMatch;
+        // 다음 줄부터 텍스트 추출 (현재 라인은 헤더만)
+        let text = lines.slice(1).join('\n').trim();
+        
+        // 텍스트가 없으면 추가 정보 사용 (같은 줄에 있는 경우)
+        if (!text && extraInfo) {
+          text = extraInfo;
+        }
+        
         return {
           id: `seg-${idx}`,
           timestamp,
-          speaker,
-          text: text || firstLine
+          speaker: speaker.trim(),
+          text: text || '(내용 없음)'
         };
       }
     }
     
-    // Fallback: treat entire segment as text with default speaker
+    // Fallback: 타임스탬프가 없거나 패턴 미매칭 - 같은 줄에 붙어있는 경우도 처리
+    // 예: "[12시 56분 03초]Speaker 0시트콤이야?" 형태의 경우
+    const bracketMatch = firstLine?.match(/^\[([^\]]+)\](.*)/);
+    if (bracketMatch) {
+      const [, timestamp, rest] = bracketMatch;
+      // 나머지 부분에서 스피커와 텍스트 분리 시도
+      const spaceIndex = rest.indexOf(' ');
+      if (spaceIndex > 0) {
+        const speaker = rest.substring(0, spaceIndex).trim();
+        const text = rest.substring(spaceIndex).trim() || lines.slice(1).join('\n').trim();
+        return {
+          id: `seg-${idx}`,
+          timestamp,
+          speaker,
+          text: text || '(내용 없음)'
+        };
+      } else {
+        // 공백이 없으면 rest 전체가 스피커
+        const text = lines.slice(1).join('\n').trim();
+        return {
+          id: `seg-${idx}`,
+          timestamp,
+          speaker: rest.trim() || 'Speaker',
+          text: text || '(내용 없음)'
+        };
+      }
+    }
+    
+    // 최종 Fallback: 타임스탬프 자체를 찾을 수 없는 경우
     return {
       id: `seg-${idx}`,
       timestamp: '00:00:00',
