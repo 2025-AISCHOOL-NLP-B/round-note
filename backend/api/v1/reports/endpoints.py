@@ -4,6 +4,9 @@ from typing import List, Optional
 from pydantic import BaseModel
 import ulid
 from datetime import datetime
+import os
+import redis
+from rq import Queue
 
 from backend.dependencies import get_db, get_current_user
 from backend import models
@@ -13,6 +16,20 @@ from backend.core.integrations import JiraService, NotionService
 from backend.core.auth.encryption import decrypt_data
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
+
+# Redis connection for background jobs
+redis_url = os.getenv('REDIS_URL')
+redis_conn = None
+if redis_url:
+    try:
+        if redis_url.startswith("rediss://"):
+            redis_conn = redis.from_url(redis_url, ssl_cert_reqs='required')
+        else:
+            redis_conn = redis.from_url(redis_url)
+        redis_conn.ping()
+    except Exception as e:
+        print(f"Redis connection failed in reports endpoints: {e}")
+        redis_conn = None
 
 
 # ============================================
@@ -580,13 +597,14 @@ async def translate_meeting_content(
     db: Session = Depends(get_db)
 ):
     """
-    회의 요약 또는 전사 내용을 번역합니다.
+    회의 요약 또는 전사 내용을 번역합니다. (백그라운드 Queue 처리)
     
     - **content_type**: 번역할 내용 타입 ("summary" 또는 "transcript")
     - **source_lang**: 원문 언어 (기본값: "Korean")
     - **target_lang**: 목표 언어 (기본값: "English")
     
-    매번 새로 번역하며, DB에는 가장 최근 번역만 캐싱됩니다.
+    번역 작업이 Redis Queue에 등록되며, 완료 시 DB에 저장됩니다.
+    상태는 TRANSLATION_STATUS 필드로 추적할 수 있습니다.
     """
     # 회의 존재 확인
     meeting = db.query(models.Meeting).filter(
@@ -600,8 +618,6 @@ async def translate_meeting_content(
         )
     
     try:
-        llm_service = LLMService()
-        
         if content_type == "summary":
             # 요약 번역
             summary = db.query(models.Summary).filter(
@@ -616,7 +632,6 @@ async def translate_meeting_content(
             
             # 캐시 확인: TRANSLATED_CONTENT에 언어 정보가 포함되어 있는지 확인
             # 형식: "[target_lang]|translated_text"
-            cached = False
             if summary.TRANSLATED_CONTENT and summary.TRANSLATED_CONTENT.startswith(f"[{target_lang}]|"):
                 # 캐시된 번역 사용
                 cached_text = summary.TRANSLATED_CONTENT.split("|", 1)[1]
@@ -626,28 +641,52 @@ async def translate_meeting_content(
                     "translated_text": cached_text,
                     "source_lang": source_lang,
                     "target_lang": target_lang,
+                    "status": summary.TRANSLATION_STATUS or "done",
                     "cached": True
                 }
             
-            # 캐시에 없으면 새로 번역
-            translated_text = await llm_service.get_translation(
-                summary.CONTENT,
-                source_lang=source_lang,
-                target_lang=target_lang
-            )
+            # Check if already processing
+            if summary.TRANSLATION_STATUS == "processing":
+                return {
+                    "meeting_id": meeting_id,
+                    "content_type": "summary",
+                    "status": "processing",
+                    "message": "Translation is already in progress"
+                }
             
-            # DB에 저장 (언어 정보 포함)
-            summary.TRANSLATED_CONTENT = f"[{target_lang}]|{translated_text}"
-            db.commit()
-            
-            return {
-                "meeting_id": meeting_id,
-                "content_type": "summary",
-                "translated_text": translated_text,
-                "source_lang": source_lang,
-                "target_lang": target_lang,
-                "cached": False
-            }
+            # Queue translation job
+            if redis_conn:
+                from backend.worker import translate_meeting_content as worker_translate
+                
+                # Mark as queued
+                summary.TRANSLATION_STATUS = "queued"
+                summary.TRANSLATION_TARGET_LANG = target_lang
+                summary.TRANSLATION_ERROR = None
+                db.commit()
+                
+                # Enqueue job
+                q = Queue('translation', connection=redis_conn)
+                job = q.enqueue(
+                    worker_translate,
+                    meeting_id,
+                    content_type,
+                    source_lang,
+                    target_lang,
+                    job_timeout='30m'  # 30 minutes timeout
+                )
+                
+                return {
+                    "meeting_id": meeting_id,
+                    "content_type": "summary",
+                    "status": "queued",
+                    "job_id": job.id,
+                    "message": "Translation job queued successfully"
+                }
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Redis queue not available"
+                )
         
         elif content_type == "transcript":
             # 전사 내용 번역
@@ -668,28 +707,52 @@ async def translate_meeting_content(
                     "translated_text": cached_text,
                     "source_lang": source_lang,
                     "target_lang": target_lang,
+                    "status": meeting.TRANSLATION_STATUS or "done",
                     "cached": True
                 }
             
-            # 캐시에 없으면 새로 번역
-            translated_text = await llm_service.get_translation(
-                meeting.CONTENT,
-                source_lang=source_lang,
-                target_lang=target_lang
-            )
+            # Check if already processing
+            if meeting.TRANSLATION_STATUS == "processing":
+                return {
+                    "meeting_id": meeting_id,
+                    "content_type": "transcript",
+                    "status": "processing",
+                    "message": "Translation is already in progress"
+                }
             
-            # DB에 저장 (언어 정보 포함)
-            meeting.TRANSLATED_CONTENT = f"[{target_lang}]|{translated_text}"
-            db.commit()
-            
-            return {
-                "meeting_id": meeting_id,
-                "content_type": "transcript",
-                "translated_text": translated_text,
-                "source_lang": source_lang,
-                "target_lang": target_lang,
-                "cached": False
-            }
+            # Queue translation job
+            if redis_conn:
+                from backend.worker import translate_meeting_content as worker_translate
+                
+                # Mark as queued
+                meeting.TRANSLATION_STATUS = "queued"
+                meeting.TRANSLATION_TARGET_LANG = target_lang
+                meeting.TRANSLATION_ERROR = None
+                db.commit()
+                
+                # Enqueue job
+                q = Queue('translation', connection=redis_conn)
+                job = q.enqueue(
+                    worker_translate,
+                    meeting_id,
+                    content_type,
+                    source_lang,
+                    target_lang,
+                    job_timeout='30m'  # 30 minutes timeout
+                )
+                
+                return {
+                    "meeting_id": meeting_id,
+                    "content_type": "transcript",
+                    "status": "queued",
+                    "job_id": job.id,
+                    "message": "Translation job queued successfully"
+                }
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Redis queue not available"
+                )
         
         else:
             raise HTTPException(
@@ -701,7 +764,88 @@ async def translate_meeting_content(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Translation failed: {str(e)}"
+            detail=f"Translation request failed: {str(e)}"
+        )
+
+
+@router.get("/{meeting_id}/translation-status")
+async def get_translation_status(
+    meeting_id: str,
+    content_type: str,  # "summary" or "transcript"
+    db: Session = Depends(get_db)
+):
+    """
+    번역 작업 상태를 조회합니다.
+    
+    - **content_type**: "summary" 또는 "transcript"
+    
+    반환값:
+    - status: queued, processing, done, error
+    - translated_text: 완료된 경우 번역된 텍스트
+    - error: 오류 발생 시 오류 메시지
+    """
+    meeting = db.query(models.Meeting).filter(
+        models.Meeting.MEETING_ID == meeting_id
+    ).first()
+    
+    if not meeting:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Meeting {meeting_id} not found"
+        )
+    
+    if content_type == "summary":
+        summary = db.query(models.Summary).filter(
+            models.Summary.MEETING_ID == meeting_id
+        ).first()
+        
+        if not summary:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Summary for meeting {meeting_id} not found"
+            )
+        
+        response = {
+            "meeting_id": meeting_id,
+            "content_type": "summary",
+            "status": summary.TRANSLATION_STATUS,
+            "target_lang": summary.TRANSLATION_TARGET_LANG,
+            "error": summary.TRANSLATION_ERROR
+        }
+        
+        # Include translated text if done
+        if summary.TRANSLATION_STATUS == "done" and summary.TRANSLATED_CONTENT:
+            # Extract text from "[lang]|text" format
+            if "|" in summary.TRANSLATED_CONTENT:
+                response["translated_text"] = summary.TRANSLATED_CONTENT.split("|", 1)[1]
+            else:
+                response["translated_text"] = summary.TRANSLATED_CONTENT
+        
+        return response
+        
+    elif content_type == "transcript":
+        response = {
+            "meeting_id": meeting_id,
+            "content_type": "transcript",
+            "status": meeting.TRANSLATION_STATUS,
+            "target_lang": meeting.TRANSLATION_TARGET_LANG,
+            "error": meeting.TRANSLATION_ERROR
+        }
+        
+        # Include translated text if done
+        if meeting.TRANSLATION_STATUS == "done" and meeting.TRANSLATED_CONTENT:
+            # Extract text from "[lang]|text" format
+            if "|" in meeting.TRANSLATED_CONTENT:
+                response["translated_text"] = meeting.TRANSLATED_CONTENT.split("|", 1)[1]
+            else:
+                response["translated_text"] = meeting.TRANSLATED_CONTENT
+        
+        return response
+    
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="content_type must be 'summary' or 'transcript'"
         )
 
 

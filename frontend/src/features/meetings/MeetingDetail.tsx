@@ -194,7 +194,9 @@ export function MeetingDetail({
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
 
   // 번역 텍스트에 언어별 포맷팅 적용
-  const formatTranslatedText = (text: string, targetLang: string): string => {
+  const formatTranslatedText = (text: string | undefined, targetLang: string): string => {
+    if (!text) return '';
+    
     const config = langConfig[targetLang];
     if (!config) return text;
 
@@ -663,36 +665,126 @@ export function MeetingDetail({
       if (response.ok) {
         const result = await response.json();
         
-        // 언어별 포맷팅 적용
-        const formattedText = formatTranslatedText(result.translated_text, targetLang);
-        
-        // 캐시에 저장
-        setTranslationCache(prev => ({
-          ...prev,
-          [type]: {
-            ...prev[type],
-            [cacheKey]: formattedText
+        // 캐시된 번역이면 즉시 표시
+        if (result.cached && result.translated_text) {
+          const formattedText = formatTranslatedText(result.translated_text, targetLang);
+          
+          // 캐시에 저장
+          setTranslationCache(prev => ({
+            ...prev,
+            [type]: {
+              ...prev[type],
+              [cacheKey]: formattedText
+            }
+          }));
+          
+          if (type === 'summary') {
+            setTranslatedSummary(formattedText);
+          } else {
+            setTranslatedContent(formattedText);
           }
-        }));
-        
-        if (type === 'summary') {
-          setTranslatedSummary(formattedText);
-        } else {
-          setTranslatedContent(formattedText);
+          
+          console.log(`[MeetingDetail] Translation loaded from cache: ${sourceLangFull} → ${targetLangFull}`);
+          setIsTranslating(false);
+          return;
         }
         
-        console.log(`[MeetingDetail] Translation completed: ${sourceLangFull} → ${targetLangFull} (formatted & cached)`);
+        // Queue에 등록된 경우 - polling 시작 (isTranslating은 유지)
+        if (result.status === 'queued' || result.status === 'processing') {
+          console.log(`[MeetingDetail] Translation queued/processing: ${result.status}`);
+          
+          // Polling 시작
+          pollTranslationStatus(contentType, targetLangFull, type, cacheKey);
+          return;
+        }
+        
+        console.log(`[MeetingDetail] Unexpected response:`, result);
       } else {
         const error = await response.json().catch(() => ({ detail: 'Translation failed' }));
         console.error('[MeetingDetail] Translation error:', error);
         alert(`번역 실패: ${error.detail || '알 수 없는 오류'}`);
+        setIsTranslating(false);
       }
     } catch (error) {
       console.error('[MeetingDetail] Translation error:', error);
       alert('번역 중 오류가 발생했습니다.');
-    } finally {
       setIsTranslating(false);
     }
+  };
+
+  // 번역 상태 polling
+  const pollTranslationStatus = async (
+    contentType: string,
+    targetLangFull: string,
+    type: 'summary' | 'content',
+    cacheKey: string
+  ) => {
+    const maxAttempts = 60; // 5분 (5초 간격)
+    let attempts = 0;
+    
+    const poll = async () => {
+      try {
+        const response = await fetch(
+          `${process.env.NEXT_PUBLIC_API_URL}/api/v1/reports/${meeting.id}/translation-status?content_type=${contentType}`,
+          {
+            credentials: 'include',
+          }
+        );
+        
+        if (response.ok) {
+          const result = await response.json();
+          
+          if (result.status === 'done' && result.translated_text) {
+            // 번역 완료
+            const formattedText = formatTranslatedText(result.translated_text, langMap[targetLangFull.toLowerCase()]?.code || 'en');
+            
+            // 캐시에 저장
+            setTranslationCache(prev => ({
+              ...prev,
+              [type]: {
+                ...prev[type],
+                [cacheKey]: formattedText
+              }
+            }));
+            
+            if (type === 'summary') {
+              setTranslatedSummary(formattedText);
+            } else {
+              setTranslatedContent(formattedText);
+            }
+            
+            console.log(`[MeetingDetail] Translation completed via polling`);
+            setIsTranslating(false);
+          } else if (result.status === 'error') {
+            // 번역 실패
+            console.error('[MeetingDetail] Translation failed:', result.error);
+            alert(`번역 실패: ${result.error || '알 수 없는 오류'}`);
+            setIsTranslating(false);
+          } else if (result.status === 'processing' || result.status === 'queued') {
+            // 계속 polling
+            attempts++;
+            if (attempts < maxAttempts) {
+              setTimeout(poll, 5000); // 5초 후 재시도
+            } else {
+              console.error('[MeetingDetail] Translation polling timeout');
+              alert('번역이 너무 오래 걸립니다. 나중에 다시 시도해주세요.');
+              setIsTranslating(false);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('[MeetingDetail] Polling error:', error);
+        attempts++;
+        if (attempts < maxAttempts) {
+          setTimeout(poll, 5000);
+        } else {
+          setIsTranslating(false);
+        }
+      }
+    };
+    
+    // 첫 polling 시작
+    setTimeout(poll, 2000); // 2초 후 첫 확인
   };
 
   const handleAudioPlayPause = () => {
@@ -1260,7 +1352,6 @@ export function MeetingDetail({
                 <CollapsibleContent>
                   <CardContent>
                     {meeting.audioUrl && meeting.audioUrl.trim() !== '' ? (
-                      <div className="space-y-4">
                       <div className="bg-gray-50 rounded-lg p-4">
                         <div className="flex items-center justify-between mb-4">
                           <div className="flex items-center gap-3">
@@ -1293,11 +1384,10 @@ export function MeetingDetail({
                             });
                           }}
                         />
+                        <p className="text-xs text-gray-500 mt-4">
+                          * 회의 중 녹음된 원본 오디오 파일입니다. 재생 또는 다운로드하여 다시 들을 수 있습니다.
+                        </p>
                       </div>
-                      <p className="text-xs text-gray-500">
-                        * 회의 중 녹음된 원본 오디오 파일입니다. 재생 또는 다운로드하여 다시 들을 수 있습니다.
-                      </p>
-                    </div>
                     ) : (
                       <div className="text-center py-8 text-gray-500">
                         <Volume2 className="w-12 h-12 mx-auto mb-2 text-gray-300" />
