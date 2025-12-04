@@ -3,7 +3,7 @@ import { useRouter } from 'next/navigation';
 import { MeetingInfoInput } from '@/features/meetings/MeetingInfoInput';
 import { MeetingContentInput } from './MeetingContentInput';
 import type { Meeting } from '@/features/dashboard/Dashboard';
-import { createMeeting, updateMeeting, endMeeting, type MeetingResponse } from '@/features/meetings/meetingsService';
+import { createMeeting, updateMeeting, type MeetingResponse } from '@/features/meetings/meetingsService';
 import { toast } from 'sonner';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card';
 import { Button } from '@/shared/ui/button';
@@ -172,29 +172,13 @@ export function MeetingStart({ meetings, onAddMeeting, meetingMode }: MeetingSta
         endBody.audio_url = `./audio_storage/${meetingData.meeting_id}.wav`;
       }
 
-      const endResponse = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/meetings/${meetingData.meeting_id}/end`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          credentials: 'include', // httpOnly Cookie 전송
-          body: JSON.stringify(endBody),
-        }
-      );
-
-      if (endResponse.ok) {
-        const endResult = await endResponse.json();
-        console.log('[MeetingStart] End meeting response:', endResult);
-
-        // 백엔드에서 생성한 요약과 액션 아이템 사용
-        summary = endResult.summary || '';
-        audioUrl = endResult.audio_url || `./audio_storage/${meetingData.meeting_id}.wav`;
-
-        // 액션 아이템 변환
-        if (endResult.action_items && Array.isArray(endResult.action_items)) {
-          actionItems = endResult.action_items.map((item: any, index: number) => ({
+      // 중복 종료 호출 제거: 하위 컴포넌트(MeetingContentInput)에서 이미 /end 처리 및 요약/액션아이템 생성 완료
+      // 여기서는 onComplete로 전달된 분석 결과를 사용합니다.
+      if (aiAnalysis) {
+        summary = aiAnalysis.summary || summary;
+        audioUrl = aiAnalysis.audio_url || audioUrl;
+        if (aiAnalysis.action_items && Array.isArray(aiAnalysis.action_items)) {
+          actionItems = aiAnalysis.action_items.map((item: any, index: number) => ({
             id: item.item_id || `${Date.now()}-${index}`,
             item_id: item.item_id,
             text: item.title || item.task || '',
@@ -208,11 +192,6 @@ export function MeetingStart({ meetings, onAddMeeting, meetingMode }: MeetingSta
             jira_assignee_id: item.jira_assignee_id || ''
           }));
         }
-
-        console.log('[MeetingStart] Using backend-generated summary and action items');
-      } else {
-        console.warn('[MeetingStart] Failed to end meeting on backend, using fallback');
-        throw new Error('Failed to end meeting');
       }
     } catch (error) {
       console.error('Failed to save meeting:', error);
