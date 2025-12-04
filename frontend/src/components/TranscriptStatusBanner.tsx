@@ -92,7 +92,7 @@ function parseTranscriptSegments(transcript: string) {
   // Split by double newlines (segment separator)
   const segments = transcript.split('\n\n').filter(s => s.trim());
   
-  return segments.map((segment, idx) => {
+  const parsed = segments.map((segment, idx) => {
     // Match pattern: [HH시 MM분 SS초] Speaker Name\nText content
     const lines = segment.split('\n');
     const headerMatch = lines[0]?.match(/^\[(\d{2}시\s+\d{2}분\s+\d{2}초)\]\s+(.+)$/);
@@ -116,6 +116,57 @@ function parseTranscriptSegments(transcript: string) {
       text: segment.trim()
     };
   });
+
+  // Post-process: split overly long segments by punctuation into smaller bubbles
+  const maxCharsPerBubble = 220; // threshold for bubble length
+  const sentenceSplitter = /(?<=\.|\?|!|…|。|？|！)\s+/g; // split on sentence boundaries
+
+  const chunked: Array<{ id: string; timestamp: string; speaker: string; text: string }> = [];
+  let counter = 0;
+
+  for (const seg of parsed) {
+    const text = seg.text || '';
+    if (text.length <= maxCharsPerBubble) {
+      chunked.push(seg);
+      continue;
+    }
+
+    // Split into sentences; if splitter yields one chunk, fallback to comma-based split
+    let parts = text.split(sentenceSplitter).filter(Boolean);
+    if (parts.length === 1) {
+      parts = text.split(/,\s+|，\s+/).filter(Boolean);
+    }
+
+    // Group sentences into bubbles that do not exceed the threshold
+    let current = '';
+    for (const p of parts) {
+      const candidate = current ? `${current} ${p}` : p;
+      if (candidate.length <= maxCharsPerBubble) {
+        current = candidate;
+      } else {
+        if (current) {
+          chunked.push({ id: `${seg.id}-${counter++}`, timestamp: seg.timestamp, speaker: seg.speaker, text: current.trim() });
+        }
+        // If single sentence exceeds threshold, hard-split mid-sentence safely
+        if (p.length > maxCharsPerBubble) {
+          let start = 0;
+          while (start < p.length) {
+            const slice = p.slice(start, start + maxCharsPerBubble);
+            chunked.push({ id: `${seg.id}-${counter++}`, timestamp: seg.timestamp, speaker: seg.speaker, text: slice.trim() });
+            start += maxCharsPerBubble;
+          }
+          current = '';
+        } else {
+          current = p;
+        }
+      }
+    }
+    if (current) {
+      chunked.push({ id: `${seg.id}-${counter++}`, timestamp: seg.timestamp, speaker: seg.speaker, text: current.trim() });
+    }
+  }
+
+  return chunked;
 }
 
 /**
