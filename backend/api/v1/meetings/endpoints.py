@@ -506,22 +506,39 @@ async def end_meeting_and_process(
         import redis
         from rq import Queue
         from backend.worker import retranscribe_meeting
+        import logging
+        logger = logging.getLogger(__name__)
 
         redis_url = os.getenv("REDIS_URL")
         if redis_url:
-            conn = redis.from_url(redis_url)
-            q = Queue("stt", connection=conn)
+            logger.info(f"=== [END MEETING] Enqueuing STT job for meeting {meeting_id} ===")
+            logger.info(f"Redis URL: {redis_url[:30]}...")
+            
+            try:
+                conn = redis.from_url(redis_url)
+                conn.ping()
+                logger.info("✅ Redis connection successful")
+                
+                q = Queue("stt", connection=conn)
+                logger.info(f"Queue 'stt' created, current jobs: {q.count}")
 
-            # 오디오 파일명 결정
-            audio_path = ended_meeting.LOCATION or ended_meeting.AUDIO_URL
-            audio_filename = os.path.basename(audio_path) if audio_path else f"{meeting_id}.wav"
+                # 오디오 파일명 결정
+                audio_path = ended_meeting.LOCATION or ended_meeting.AUDIO_URL
+                audio_filename = os.path.basename(audio_path) if audio_path else f"{meeting_id}.wav"
+                logger.info(f"Audio filename: {audio_filename}")
 
-            q.enqueue(retranscribe_meeting, meeting_id, audio_filename)
+                job = q.enqueue(retranscribe_meeting, meeting_id, audio_filename)
+                logger.info(f"✅ STT job enqueued successfully: job_id={job.id}, status={job.get_status()}")
+            except Exception as redis_error:
+                logger.error(f"❌ Redis enqueue failed: {str(redis_error)}", exc_info=True)
+                raise
         else:
+            logger.warning("⚠️ REDIS_URL not set, running synchronously")
             # 환경에 Redis가 없으면 동기 실행 (개발/테스트용)
             retranscribe_meeting(meeting_id, None)
-    except Exception:
+    except Exception as e:
         # 재전사 큐 등록 실패해도 회의 종료는 계속 진행
+        logger.error(f"❌ Failed to enqueue retranscription: {str(e)}", exc_info=True)
         pass
 
     return {
@@ -772,21 +789,39 @@ def finalize_meeting_and_enqueue_stt(
     db.commit()
 
     # Enqueue RQ job
+    import logging
+    logger = logging.getLogger(__name__)
+    
     redis_url = os.getenv("REDIS_URL")
     if not redis_url:
+        logger.error("❌ REDIS_URL environment variable not set")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="REDIS_URL 환경 변수가 필요합니다.")
-    conn = redis.from_url(redis_url)
-    q = Queue("stt", connection=conn)
+    
+    logger.info(f"=== [FINALIZE] Enqueuing finalization job for meeting {meeting_id} ===")
+    logger.info(f"Redis URL: {redis_url[:30]}...")
+    
+    try:
+        conn = redis.from_url(redis_url)
+        conn.ping()
+        logger.info("✅ Redis connection successful")
+        
+        q = Queue("stt", connection=conn)
+        logger.info(f"Queue 'stt' created, current jobs: {q.count}")
 
-    # Determine audio filename
-    audio_path = db_meeting.LOCATION or db_meeting.AUDIO_URL
-    audio_filename = os.path.basename(audio_path) if audio_path else f"{meeting_id}.wav"
+        # Determine audio filename
+        audio_path = db_meeting.LOCATION or db_meeting.AUDIO_URL
+        audio_filename = os.path.basename(audio_path) if audio_path else f"{meeting_id}.wav"
+        logger.info(f"Audio filename: {audio_filename}")
 
-    # Import worker task lazily to avoid circular imports
-    from backend.worker import retranscribe_meeting
-    job = q.enqueue(retranscribe_meeting, meeting_id, audio_filename)
+        # Import worker task lazily to avoid circular imports
+        from backend.worker import retranscribe_meeting
+        job = q.enqueue(retranscribe_meeting, meeting_id, audio_filename)
+        logger.info(f"✅ Finalization job enqueued successfully: job_id={job.id}, status={job.get_status()}")
 
-    return {"status": "queued", "meeting_id": meeting_id, "job_id": job.id}
+        return {"status": "queued", "meeting_id": meeting_id, "job_id": job.id}
+    except Exception as e:
+        logger.error(f"❌ Failed to enqueue finalization job: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to enqueue: {str(e)}")
 
 # [추가(테스트용)]
 class DummyContentRequest(BaseModel):

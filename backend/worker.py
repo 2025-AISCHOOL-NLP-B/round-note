@@ -21,15 +21,25 @@ if not redis_url:
 # Render의 rediss:// (SSL) URL에 맞게 접속 설정을 합니다.
 conn = None
 try:
+    print("=" * 70)
+    print("🚀 Redis Worker 초기화 시작")
+    print(f"📡 Redis URL: {redis_url[:30]}...")
+    
     if redis_url.startswith("rediss://"):
+        print("🔒 SSL 연결 사용 (rediss://)")
         conn = redis.from_url(redis_url, ssl_cert_reqs='required')
     else:
+        print("🔓 일반 연결 사용 (redis://)")
         conn = redis.from_url(redis_url)
     
     conn.ping()
-    print("Redis에 성공적으로 연결되었습니다.")
+    print("✅ Redis에 성공적으로 연결되었습니다.")
+    print(f"📊 Redis 정보: {conn.info('server')['redis_version']}")
+    print("=" * 70)
 except Exception as e:
-    print(f"Redis 연결 실패: {e}")
+    print("=" * 70)
+    print(f"❌ Redis 연결 실패: {e}")
+    print("=" * 70)
     exit(1)
 
 # --- 작업(Task)을 worker.py에 정의합니다. ---
@@ -38,13 +48,21 @@ def retranscribe_meeting(meeting_id: str, audio_filename: str | None = None) -> 
     Batch STT using ElevenLabs for a meeting's .wav audio.
     Resolves audio path, calls STTService.transcribe_wav, and persists results.
     """
+    print("\n" + "=" * 70)
+    print(f"🎯 [WORKER] retranscribe_meeting 작업 시작")
+    print(f"📝 Meeting ID: {meeting_id}")
+    print(f"🎵 Audio filename: {audio_filename}")
+    print("=" * 70)
+    
     db: Session = SessionLocal()
     try:
         meeting = db.query(models.Meeting).filter(models.Meeting.MEETING_ID == meeting_id).first()
         if not meeting:
+            print(f"❌ [WORKER] Meeting not found: {meeting_id}")
             return {"success": False, "message": "Meeting not found", "meeting_id": meeting_id}
 
         # Mark status processing
+        print(f"⏳ [WORKER] 상태를 'processing'으로 변경")
         meeting.FINAL_TRANSCRIPT_STATUS = "processing"
         meeting.FINAL_TRANSCRIPT_ERROR = None
         db.commit()
@@ -406,10 +424,22 @@ if __name__ == '__main__':
     # Listen on queues used for retranscription, translation and future tasks
     listen = ['high-priority-queue', 'stt', 'translation']
 
-    print(f"'{listen}' 큐를 감시합니다. 새 작업을 기다립니다...")
+    print("\n" + "=" * 70)
+    print(f"👂 '{listen}' 큐를 감시합니다.")
+    print("=" * 70)
 
     queues = [Queue(name, connection=conn) for name in listen]
+    
+    # 각 큐의 현재 작업 수 출력
+    print("\n📊 큐 상태:")
+    for queue in queues:
+        job_count = queue.count
+        print(f"  - Queue '{queue.name}': {job_count} jobs waiting")
+    
     worker = Worker(queues, connection=conn)
+    print(f"\n🤖 Worker ID: {worker.name}")
+    print("=" * 70)
+    print("⏳ 새 작업을 기다립니다...\n")
 
     # work()는 무한 루프입니다. 이 프로세스는 종료되지 않고 계속 실행됩니다.
     worker.work()
