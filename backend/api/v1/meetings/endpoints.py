@@ -9,6 +9,9 @@ from backend.schemas import meeting as meeting_schema
 from backend.crud import meeting as meeting_crud
 from backend.dependencies import get_current_user
 from backend import models
+# RQ
+import redis
+from rq import Queue
 # TODO: Redis/RQ 클라이언트 (get_redis_conn) 임포트 및 backend.worker.process_meeting_job 임포트
 # [추가]
 from backend.core.llm.rag.indexer import index_meeting_transcript, index_meeting_transcript_background
@@ -192,6 +195,62 @@ def get_meeting(
     }
     
     return meeting_dict
+
+# ==================== 3-b. 회의 최종 전사/산출물 조회 ====================
+@router.get("/{meeting_id}/artifacts")
+def get_meeting_artifacts(
+    meeting_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Return final transcript status/text and derived artifacts for frontend polling.
+    """
+    meeting = db.query(models.Meeting).filter(models.Meeting.MEETING_ID == meeting_id).first()
+    if not meeting:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="회의를 찾을 수 없습니다.")
+    if meeting.CREATOR_ID != current_user.USER_ID:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="본인이 생성한 회의만 조회할 수 있습니다.")
+
+    # latest summary (if exists)
+    latest_summary = None
+    if meeting.summaries:
+        latest = sorted(meeting.summaries, key=lambda s: s.CREATED_DT or datetime.min, reverse=True)[0]
+        latest_summary = {
+            "summary_id": latest.SUMMARY_ID,
+            "content": latest.CONTENT,
+            "translated_content": latest.TRANSLATED_CONTENT,
+            "format": latest.FORMAT,
+            "created_dt": latest.CREATED_DT,
+        }
+
+    # action items
+    action_items = [
+        {
+            "item_id": item.ITEM_ID,
+            "title": item.TITLE,
+            "description": item.DESCRIPTION,
+            "status": item.STATUS,
+            "priority": item.PRIORITY,
+            "assignee_id": item.ASSIGNEE_ID,
+            "assignee_name": item.ASSIGNEE_NAME,
+            "jira_assignee_id": item.JIRA_ASSIGNEE_ID,
+            "due_dt": item.DUE_DT,
+            "created_dt": item.CREATED_DT,
+            "updated_dt": item.UPDATED_DT,
+        }
+        for item in meeting.action_items
+    ]
+
+    return {
+        "meeting_id": meeting.MEETING_ID,
+        "final_transcript_status": meeting.FINAL_TRANSCRIPT_STATUS,
+        "final_transcript_error": meeting.FINAL_TRANSCRIPT_ERROR,
+        "final_transcript_url": meeting.FINAL_TRANSCRIPT_URL,
+        "final_transcript_text": meeting.FINAL_TRANSCRIPT_TEXT,
+        "summary": latest_summary,
+        "action_items": action_items,
+    }
 
 # ==================== 4. 회의 수정 ====================
 @router.put("/{meeting_id}", response_model=meeting_schema.MeetingOut)
@@ -663,6 +722,45 @@ async def upload_meeting_audio(
         "audio_url": audio_url,
         "file_size": len(content)
     }
+
+# ==================== 8. 회의 재전사 작업 큐 등록 (ElevenLabs) ====================
+@router.post("/{meeting_id}/finalize", status_code=status.HTTP_202_ACCEPTED)
+def finalize_meeting_and_enqueue_stt(
+    meeting_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Post-meeting re-transcription: enqueue RQ job to run ElevenLabs STT on the .wav in audio_storage.
+    Returns a queued status and basic job info.
+    """
+    db_meeting = meeting_crud.get_meeting(db=db, meeting_id=meeting_id)
+    if not db_meeting:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="회의를 찾을 수 없습니다.")
+    if db_meeting.CREATOR_ID != current_user.USER_ID:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="본인이 생성한 회의만 처리할 수 있습니다.")
+
+    # Set status to queued
+    db_meeting.FINAL_TRANSCRIPT_STATUS = "queued"
+    db_meeting.FINAL_TRANSCRIPT_ERROR = None
+    db.commit()
+
+    # Enqueue RQ job
+    redis_url = os.getenv("REDIS_URL")
+    if not redis_url:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="REDIS_URL 환경 변수가 필요합니다.")
+    conn = redis.from_url(redis_url)
+    q = Queue("stt", connection=conn)
+
+    # Determine audio filename
+    audio_path = db_meeting.LOCATION or db_meeting.AUDIO_URL
+    audio_filename = os.path.basename(audio_path) if audio_path else f"{meeting_id}.wav"
+
+    # Import worker task lazily to avoid circular imports
+    from backend.worker import retranscribe_meeting
+    job = q.enqueue(retranscribe_meeting, meeting_id, audio_filename)
+
+    return {"status": "queued", "meeting_id": meeting_id, "job_id": job.id}
 
 # [추가(테스트용)]
 class DummyContentRequest(BaseModel):

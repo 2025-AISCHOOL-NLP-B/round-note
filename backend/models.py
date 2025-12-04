@@ -115,6 +115,11 @@ class Meeting(Base):
     AUDIO_URL = Column(TEXT, nullable=True)
     # Jira 프로젝트 키 (회의별 마지막 선택 프로젝트 기억용)
     JIRA_PROJECT_KEY = Column(TEXT, nullable=True)
+    # Post-meeting re-transcription (ElevenLabs) artifacts
+    FINAL_TRANSCRIPT_TEXT = Column(TEXT, nullable=True)
+    FINAL_TRANSCRIPT_URL = Column(TEXT, nullable=True)
+    FINAL_TRANSCRIPT_STATUS = Column(TEXT, nullable=True)  # queued|processing|done|error
+    FINAL_TRANSCRIPT_ERROR = Column(TEXT, nullable=True)
 
     # 관계
     creator = relationship(
