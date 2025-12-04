@@ -93,11 +93,7 @@ export function MeetingDetail({
 
   // Translation states
   const [summaryLang, setSummaryLang] = useState('ko');
-  const [contentLang, setContentLang] = useState(() => {
-    // localStorage에서 마지막 선택 언어 불러오기
-    const savedLang = localStorage.getItem(`meeting-${meeting.id}-content-lang`);
-    return savedLang || 'ko';
-  });
+  const [contentLang, setContentLang] = useState('ko');
   const [translatedSummary, setTranslatedSummary] = useState('');
   const [translatedContent, setTranslatedContent] = useState('');
   const [isTranslating, setIsTranslating] = useState(false);
@@ -114,21 +110,173 @@ export function MeetingDetail({
   // 원문 언어 (현재는 한국어로 고정, 추후 설정에서 변경 가능)
   const sourceLang = 'ko';
   
-  // 언어 코드 매핑
-  const langMap: Record<string, { code: string; name: string; fullName: string }> = {
-    'ko': { code: 'ko', name: '한국어', fullName: 'Korean' },
-    'en': { code: 'en', name: 'English', fullName: 'English' },
-    'ja': { code: 'ja', name: '日本語', fullName: 'Japanese' },
-    'zh': { code: 'zh', name: '中文', fullName: 'Chinese' },
-    'es': { code: 'es', name: 'Español', fullName: 'Spanish' },
-    'fr': { code: 'fr', name: 'Français', fullName: 'French' },
-    'de': { code: 'de', name: 'Deutsch', fullName: 'German' },
+  // 언어별 UI 설정 (정규표현식, 포맷팅 규칙)
+  const langConfig: Record<string, { 
+    code: string; 
+    name: string; 
+    fullName: string;
+    numberFormat?: string; // 숫자 포맷 (예: 1,000 vs 1.000)
+    dateFormat?: string; // 날짜 포맷 (예: YYYY-MM-DD vs DD.MM.YYYY)
+    quotationMark?: { open: string; close: string }; // 인용 부호
+    spaceBeforePunctuation?: boolean; // 문장부호 전 공백 여부
+  }> = {
+    'ko': { 
+      code: 'ko', 
+      name: '한국어', 
+      fullName: 'Korean',
+      numberFormat: 'comma', // 1,000
+      dateFormat: 'YYYY년 MM월 DD일',
+      quotationMark: { open: '「', close: '」' },
+      spaceBeforePunctuation: false
+    },
+    'en': { 
+      code: 'en', 
+      name: 'English', 
+      fullName: 'English',
+      numberFormat: 'comma', // 1,000
+      dateFormat: 'MMMM DD, YYYY',
+      quotationMark: { open: '"', close: '"' },
+      spaceBeforePunctuation: false
+    },
+    'ja': { 
+      code: 'ja', 
+      name: '日本語', 
+      fullName: 'Japanese',
+      numberFormat: 'comma', // 1,000
+      dateFormat: 'YYYY年MM月DD日',
+      quotationMark: { open: '「', close: '」' },
+      spaceBeforePunctuation: false
+    },
+    'zh': { 
+      code: 'zh', 
+      name: '中文', 
+      fullName: 'Chinese',
+      numberFormat: 'comma', // 1,000
+      dateFormat: 'YYYY年MM月DD日',
+      quotationMark: { open: '「', close: '」' },
+      spaceBeforePunctuation: false
+    },
+    'es': { 
+      code: 'es', 
+      name: 'Español', 
+      fullName: 'Spanish',
+      numberFormat: 'dot', // 1.000
+      dateFormat: 'DD de MMMM de YYYY',
+      quotationMark: { open: '«', close: '»' },
+      spaceBeforePunctuation: true
+    },
+    'fr': { 
+      code: 'fr', 
+      name: 'Français', 
+      fullName: 'French',
+      numberFormat: 'dot', // 1.000
+      dateFormat: 'DD MMMM YYYY',
+      quotationMark: { open: '«', close: '»' },
+      spaceBeforePunctuation: true
+    },
+    'de': { 
+      code: 'de', 
+      name: 'Deutsch', 
+      fullName: 'German',
+      numberFormat: 'dot', // 1.000
+      dateFormat: 'DD.MM.YYYY',
+      quotationMark: { open: '„', close: '"' },
+      spaceBeforePunctuation: false
+    },
   };
+  
+  // 언어 코드 매핑 (호환성 유지)
+  const langMap = langConfig;
 
   // Audio states
   const [isPlaying, setIsPlaying] = useState(false);
   const [audioSrc, setAudioSrc] = useState('');
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+
+  // 번역 텍스트에 언어별 포맷팅 적용
+  const formatTranslatedText = (text: string, targetLang: string): string => {
+    const config = langConfig[targetLang];
+    if (!config) return text;
+
+    let formatted = text;
+
+    // 라인별 처리 (타임스탬프와 스피커 정보 유지)
+    const lines = formatted.split('\n');
+    formatted = lines.map(line => {
+      // 타임스탬프 패턴: [HH시 MM분 SS초] 또는 [HH時MM分SS秒] 등
+      const timestampMatch = line.match(/^\[([^\]]+)\]\s*/);
+      const timestamp = timestampMatch ? timestampMatch[0] : '';
+      const contentAfterTimestamp = timestampMatch ? line.substring(timestampMatch[0].length) : line;
+
+      let processedContent = contentAfterTimestamp;
+
+      // 언어별 포맷팅 규칙 적용
+      switch (targetLang) {
+        case 'es': // 스페인어
+          // 문장부호 전 공백 추가
+          processedContent = processedContent
+            .replace(/([^\s])([?!;:])/g, '$1 $2')
+            .replace(/([«])\s+/g, '$1 ')
+            .replace(/\s+([»])/g, ' $1');
+          // 숫자 포맷: 1.000
+          processedContent = processedContent.replace(/(\d{1,3}),(\d{3})/g, '$1.$2');
+          break;
+
+        case 'fr': // 프랑스어
+          // 문장부호 전 공백 추가 (! ? ; :)
+          processedContent = processedContent
+            .replace(/([^\s])(!)/g, '$1 $2')
+            .replace(/([^\s])(\?)/g, '$1 $2')
+            .replace(/([^\s])(;)/g, '$1 $2')
+            .replace(/([^\s])(:)/g, '$1 $2')
+            .replace(/([«])\s+/g, '$1 ')
+            .replace(/\s+([»])/g, ' $1');
+          // 숫자 포맷: 1.000
+          processedContent = processedContent.replace(/(\d{1,3}),(\d{3})/g, '$1.$2');
+          // 대문자 규칙 (문장 시작은 대문자)
+          processedContent = processedContent.replace(/([.!?]\s+)([a-z])/g, (match, p1, p2) => p1 + p2.toUpperCase());
+          break;
+
+        case 'de': // 독일어
+          // 숫자 포맷: 1.000
+          processedContent = processedContent.replace(/(\d{1,3}),(\d{3})/g, '$1.$2');
+          break;
+
+        case 'ja': // 일본어
+          // 숫자 포맷: 1,000 (일본식)
+          processedContent = processedContent.replace(/(\d{1,3})\.(\d{3})/g, '$1,$2');
+          // 마침표 정규화: 。(일본식 마침표)
+          processedContent = processedContent.replace(/\.$/, '。');
+          break;
+
+        case 'zh': // 중국어
+          // 마침표 정규화: 。(중국식 마침표)
+          processedContent = processedContent.replace(/\.$/, '。');
+          break;
+
+        case 'en': // 영어
+          // 숫자 포맷: 1,000
+          processedContent = processedContent.replace(/(\d{1,3})\.(\d{3})/g, '$1,$2');
+          // 대문자 규칙 (문장 시작, 문장부호 후)
+          processedContent = processedContent.replace(/^([a-z])/g, (match) => match.toUpperCase());
+          processedContent = processedContent.replace(/([.!?]\s+)([a-z])/g, (match, p1, p2) => p1 + p2.toUpperCase());
+          break;
+
+        case 'ko': // 한국어
+          // 숫자 포맷: 1,000
+          processedContent = processedContent.replace(/(\d{1,3})\.(\d{3})/g, '$1,$2');
+          break;
+
+        default:
+          break;
+      }
+
+      // 타임스탬프와 함께 반환
+      return timestamp + processedContent;
+    }).join('\n');
+
+    return formatted;
+  };
 
   // ElevenLabs 재전사 상태 및 폴링 훅
   const { 
@@ -139,6 +287,25 @@ export function MeetingDetail({
     stopPolling,
     refetch: refetchArtifacts 
   } = useMeetingArtifacts(meeting.id);
+
+  // 미팅 ID 변경 시 캐시된 선택 언어 불러오고 자동 번역 수행
+  useEffect(() => {
+    const savedLang = localStorage.getItem(`meeting-${meeting.id}-content-lang`);
+    if (savedLang) {
+      setContentLang(savedLang);
+    } else {
+      setContentLang('ko');
+    }
+  }, [meeting.id]);
+
+  // contentLang 변경 시 자동 번역 (캐시된 언어가 로드되었을 때)
+  useEffect(() => {
+    if (contentLang !== sourceLang && meeting.content) {
+      handleTranslate(meeting.content, contentLang, 'content');
+    } else if (contentLang === sourceLang) {
+      setTranslatedContent('');
+    }
+  }, [contentLang, meeting.content]);
 
   const [isFinalizingTranscript, setIsFinalizingTranscript] = useState(false);
   const [finalizationProgress, setFinalizationProgress] = useState<{ all_done: boolean; final_transcript_status: 'queued'|'processing'|'done'|'error'|null; final_transcript_error?: string|null } | null>(null);
@@ -496,22 +663,25 @@ export function MeetingDetail({
       if (response.ok) {
         const result = await response.json();
         
+        // 언어별 포맷팅 적용
+        const formattedText = formatTranslatedText(result.translated_text, targetLang);
+        
         // 캐시에 저장
         setTranslationCache(prev => ({
           ...prev,
           [type]: {
             ...prev[type],
-            [cacheKey]: result.translated_text
+            [cacheKey]: formattedText
           }
         }));
         
         if (type === 'summary') {
-          setTranslatedSummary(result.translated_text);
+          setTranslatedSummary(formattedText);
         } else {
-          setTranslatedContent(result.translated_text);
+          setTranslatedContent(formattedText);
         }
         
-        console.log(`[MeetingDetail] Translation completed: ${sourceLangFull} → ${targetLangFull} (cached)`);
+        console.log(`[MeetingDetail] Translation completed: ${sourceLangFull} → ${targetLangFull} (formatted & cached)`);
       } else {
         const error = await response.json().catch(() => ({ detail: 'Translation failed' }));
         console.error('[MeetingDetail] Translation error:', error);
