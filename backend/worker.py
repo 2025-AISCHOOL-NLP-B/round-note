@@ -82,18 +82,135 @@ def retranscribe_meeting(meeting_id: str, audio_filename: str | None = None) -> 
         if text:
             meeting.FINAL_TRANSCRIPT_TEXT = text
             meeting.FINAL_TRANSCRIPT_STATUS = "done"
-            db.commit()
-            # Chain summarization and action item extraction
+            # Overwrite realtime transcript with final transcript for consistency
+            meeting.CONTENT = text
+            
+            # Synchronously generate summary and action items from final transcript
+            print(f"[Worker] STT completed for {meeting_id}, generating summary and embeddings...")
             try:
-                summarize_meeting_from_final_transcript(meeting_id)
-            except Exception:
-                # best-effort; do not fail the transcript job
-                pass
+                # Use LLM service directly in this transaction
+                llm = LLMService()
+                result = llm.get_summary_and_actions_sync([text]) if hasattr(LLMService, 'get_summary_and_actions_sync') else None
+                if result is None:
+                    import asyncio
+                    async def _run():
+                        return await llm.get_summary_and_actions([text])
+                    result = asyncio.get_event_loop().run_until_complete(_run())
+
+                print(f"[Worker] LLM result: {result}")
+                
+                # Save summary
+                rolling_summary = result.get("rolling_summary") or result.get("summary")
+                if rolling_summary:
+                    summary_obj = models.Summary(
+                        SUMMARY_ID=str(ulid.new()),
+                        MEETING_ID=meeting_id,
+                        FORMAT="markdown",
+                        CONTENT=rolling_summary
+                    )
+                    db.add(summary_obj)
+                    print(f"[Worker] Summary created for {meeting_id}")
+
+                # Save action items
+                action_items_list = result.get("action_items", [])
+                print(f"[Worker] Processing {len(action_items_list)} action items for {meeting_id}")
+                for item_data in action_items_list:
+                    deadline_str = item_data.get("deadline")
+                    due_dt = None
+                    if deadline_str and deadline_str != "미정":
+                        from datetime import datetime
+                        try:
+                            due_dt = datetime.strptime(deadline_str, "%Y-%m-%d")
+                        except Exception:
+                            due_dt = None
+
+                    ai = models.ActionItem(
+                        ITEM_ID=str(ulid.new()),
+                        MEETING_ID=meeting_id,
+                        TITLE=item_data.get("task", ""),
+                        DESCRIPTION=item_data.get("task", ""),
+                        STATUS="PENDING",
+                        PRIORITY="MEDIUM",
+                        ASSIGNEE_ID=None,
+                        ASSIGNEE_NAME=item_data.get("assignee"),
+                        DUE_DT=due_dt
+                    )
+                    db.add(ai)
+                
+                print(f"[Worker] Action items created for {meeting_id}")
+            except Exception as e:
+                print(f"[Worker] Summarization failed: {e}")
+            
+            # Synchronously index embeddings
+            try:
+                from backend.core.llm.rag.indexer import index_meeting_transcript
+                index_meeting_transcript(db, meeting_id)
+                print(f"[Worker] Embeddings indexed for {meeting_id}")
+            except Exception as e:
+                print(f"[Worker] Embedding indexing failed: {e}")
+            
+            # Commit all changes in one transaction
+            db.commit()
+            print(f"[Worker] All tasks completed for {meeting_id}")
+            
             return {"success": True, "meeting_id": meeting_id, "length": len(text or "")}
         else:
             meeting.FINAL_TRANSCRIPT_STATUS = "error"
             meeting.FINAL_TRANSCRIPT_ERROR = (raw or {}).get("message") or str((raw or {}))
             db.commit()
+            # Fallback: use realtime transcript CONTENT to continue pipeline
+            try:
+                if meeting.CONTENT and meeting.CONTENT.strip():
+                    from backend.core.llm.rag.indexer import index_meeting_transcript
+                    # Summarize and action items from CONTENT
+                    llm = LLMService()
+                    result = llm.get_summary_and_actions_sync([meeting.CONTENT]) if hasattr(LLMService, 'get_summary_and_actions_sync') else None
+                    if result is None:
+                        import asyncio
+                        async def _run():
+                            return await llm.get_summary_and_actions([meeting.CONTENT])
+                        result = asyncio.get_event_loop().run_until_complete(_run())
+
+                    # Save summary
+                    rolling_summary = result.get("rolling_summary") or result.get("summary")
+                    if rolling_summary:
+                        summary_obj = models.Summary(
+                            SUMMARY_ID=str(ulid.new()),
+                            MEETING_ID=meeting_id,
+                            FORMAT="markdown",
+                            CONTENT=rolling_summary
+                        )
+                        db.add(summary_obj)
+
+                    # Save action items
+                    for item_data in result.get("action_items", []):
+                        deadline_str = item_data.get("deadline")
+                        due_dt = None
+                        if deadline_str and deadline_str != "미정":
+                            from datetime import datetime
+                            try:
+                                due_dt = datetime.strptime(deadline_str, "%Y-%m-%d")
+                            except Exception:
+                                due_dt = None
+
+                        ai = models.ActionItem(
+                            ITEM_ID=str(ulid.new()),
+                            MEETING_ID=meeting_id,
+                            TITLE=item_data.get("task", ""),
+                            DESCRIPTION=item_data.get("task", ""),
+                            STATUS="PENDING",
+                            PRIORITY="MEDIUM",
+                            ASSIGNEE_ID=None,
+                            ASSIGNEE_NAME=item_data.get("assignee"),
+                            DUE_DT=due_dt
+                        )
+                        db.add(ai)
+
+                    # Index embeddings from fallback text
+                    index_meeting_transcript(db, meeting_id)
+                    db.commit()
+            except Exception:
+                db.rollback()
             return {"success": False, "meeting_id": meeting_id, "error": meeting.FINAL_TRANSCRIPT_ERROR}
     except Exception as e:
         try:
@@ -113,12 +230,16 @@ def summarize_meeting_from_final_transcript(meeting_id: str) -> dict:
     """Create summary and action items using the final transcript text."""
     db: Session = SessionLocal()
     try:
+        print(f"[Worker] Summarize job started for meeting {meeting_id}")
         meeting = db.query(models.Meeting).filter(models.Meeting.MEETING_ID == meeting_id).first()
         if not meeting:
+            print(f"[Worker] Meeting not found: {meeting_id}")
             return {"success": False, "message": "Meeting not found", "meeting_id": meeting_id}
         if not meeting.FINAL_TRANSCRIPT_TEXT:
+            print(f"[Worker] Final transcript not ready for {meeting_id}")
             return {"success": False, "message": "Final transcript not ready", "meeting_id": meeting_id}
 
+        print(f"[Worker] Calling LLM for summary/actions for {meeting_id}")
         llm = LLMService()
         result = llm.get_summary_and_actions_sync([meeting.FINAL_TRANSCRIPT_TEXT]) if hasattr(LLMService, 'get_summary_and_actions_sync') else None
         if result is None:
@@ -139,6 +260,7 @@ def summarize_meeting_from_final_transcript(meeting_id: str) -> dict:
                 CONTENT=rolling_summary
             )
             db.add(summary_obj)
+            print(f"[Worker] Summary created for {meeting_id}")
 
         # Save action items
         for item_data in result.get("action_items", []):
@@ -163,10 +285,13 @@ def summarize_meeting_from_final_transcript(meeting_id: str) -> dict:
                 DUE_DT=due_dt
             )
             db.add(ai)
-
+        
+        print(f"[Worker] Action items created for {meeting_id}")
         db.commit()
+        print(f"[Worker] Summarize job completed for {meeting_id}")
         return {"success": True, "meeting_id": meeting_id, "summary_saved": bool(summary_obj)}
     except Exception as e:
+        print(f"[Worker] Summarize job error for {meeting_id}: {e}")
         db.rollback()
         return {"success": False, "meeting_id": meeting_id, "error": str(e)}
     finally:
