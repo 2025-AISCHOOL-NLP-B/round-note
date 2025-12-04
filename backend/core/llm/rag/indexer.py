@@ -27,11 +27,15 @@ def index_meeting_transcript(db: Session, meeting_id: str):
         .filter(models.Meeting.MEETING_ID == meeting_id)
         .first()
     )
-    if not meeting or not meeting.CONTENT:
+    if not meeting:
+        return
+
+    # 최종 전사본 우선 사용, 없으면 실시간 전사본으로 폴백
+    raw_text = meeting.FINAL_TRANSCRIPT_TEXT or meeting.CONTENT or ""
+    if not raw_text.strip():
         return
 
     # 1) 전사 텍스트를 간단하게 문단/문장 단위로 쪼개기 (간단 예시)
-    raw_text = meeting.CONTENT
     chunks = [c.strip() for c in raw_text.split("\n") if c.strip()]
     # 필요하면 더 정교한 chunker로 교체
 

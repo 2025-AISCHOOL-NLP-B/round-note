@@ -9,6 +9,9 @@ from backend.schemas import meeting as meeting_schema
 from backend.crud import meeting as meeting_crud
 from backend.dependencies import get_current_user
 from backend import models
+# RQ
+import redis
+from rq import Queue
 # TODO: Redis/RQ 클라이언트 (get_redis_conn) 임포트 및 backend.worker.process_meeting_job 임포트
 # [추가]
 from backend.core.llm.rag.indexer import index_meeting_transcript, index_meeting_transcript_background
@@ -192,6 +195,63 @@ def get_meeting(
     }
     
     return meeting_dict
+
+# ==================== 3-b. 회의 최종 전사/산출물 조회 ====================
+@router.get("/{meeting_id}/artifacts")
+def get_meeting_artifacts(
+    meeting_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Return final transcript status/text and derived artifacts for frontend polling.
+    """
+    meeting = db.query(models.Meeting).filter(models.Meeting.MEETING_ID == meeting_id).first()
+    if not meeting:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="회의를 찾을 수 없습니다.")
+    if meeting.CREATOR_ID != current_user.USER_ID:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="본인이 생성한 회의만 조회할 수 있습니다.")
+
+    # latest summary (if exists)
+    latest_summary = None
+    if meeting.summaries:
+        latest = sorted(meeting.summaries, key=lambda s: s.CREATED_DT or datetime.min, reverse=True)[0]
+        latest_summary = {
+            "summary_id": latest.SUMMARY_ID,
+            "content": latest.CONTENT,
+            "translated_content": latest.TRANSLATED_CONTENT,
+            "format": latest.FORMAT,
+            "created_dt": latest.CREATED_DT,
+        }
+
+    # action items
+    action_items = [
+        {
+            "item_id": item.ITEM_ID,
+            "title": item.TITLE,
+            "description": item.DESCRIPTION,
+            "status": item.STATUS,
+            "priority": item.PRIORITY,
+            "assignee_id": item.ASSIGNEE_ID,
+            "assignee_name": item.ASSIGNEE_NAME,
+            "jira_assignee_id": item.JIRA_ASSIGNEE_ID,
+            "due_dt": item.DUE_DT,
+            "created_dt": item.CREATED_DT,
+            "updated_dt": item.UPDATED_DT,
+        }
+        for item in meeting.action_items
+    ]
+
+    return {
+        "meeting_id": meeting.MEETING_ID,
+        "audio_url": meeting.AUDIO_URL,
+        "final_transcript_status": meeting.FINAL_TRANSCRIPT_STATUS,
+        "final_transcript_error": meeting.FINAL_TRANSCRIPT_ERROR,
+        "final_transcript_url": meeting.FINAL_TRANSCRIPT_URL,
+        "final_transcript_text": meeting.FINAL_TRANSCRIPT_TEXT,
+        "summary": latest_summary,
+        "action_items": action_items,
+    }
 
 # ==================== 4. 회의 수정 ====================
 @router.put("/{meeting_id}", response_model=meeting_schema.MeetingOut)
@@ -435,48 +495,34 @@ async def end_meeting_and_process(
             print(f"LLM 처리 오류: {e}")
             # LLM 처리 실패해도 회의 종료는 성공으로 간주
 
-    # ==================== 임베딩 생성 (RAG 검색을 위해) ====================
-    # 회의 전사 내용이 있으면 벡터 임베딩 생성
-    if ended_meeting.CONTENT:
-        try:
-            from backend.core.llm.rag.vectorstore import VectorStore
-            import logging
+    # ==================== 재전사 작업 큐 등록 (고품질 전사) ====================
+    # 회의 종료 시 ElevenLabs 재전사 파이프라인을 즉시 큐에 등록
+    try:
+        ended_meeting.FINAL_TRANSCRIPT_STATUS = "queued"
+        ended_meeting.FINAL_TRANSCRIPT_ERROR = None
+        db.commit()
 
-            logger = logging.getLogger(__name__)
-            logger.info(f"회의 '{meeting_id}' 임베딩 생성 시작...")
+        import os
+        import redis
+        from rq import Queue
+        from backend.worker import retranscribe_meeting
 
-            # 회의 내용을 청크로 분할
-            lines = ended_meeting.CONTENT.split('\n')
-            chunks = []
-            current_chunk = []
+        redis_url = os.getenv("REDIS_URL")
+        if redis_url:
+            conn = redis.from_url(redis_url)
+            q = Queue("stt", connection=conn)
 
-            for line in lines:
-                line = line.strip()
-                if line:
-                    current_chunk.append(line)
-                    if len(current_chunk) >= 3:  # 3줄씩 청크 생성
-                        chunks.append(' '.join(current_chunk))
-                        current_chunk = []
+            # 오디오 파일명 결정
+            audio_path = ended_meeting.LOCATION or ended_meeting.AUDIO_URL
+            audio_filename = os.path.basename(audio_path) if audio_path else f"{meeting_id}.wav"
 
-            # 남은 청크 추가
-            if current_chunk:
-                chunks.append(' '.join(current_chunk))
-
-            # 벡터 스토어에 저장
-            if chunks:
-                vectorstore = VectorStore(db)
-                vectorstore.add_texts(meeting_id, chunks)
-                db.commit()
-                logger.info(f"회의 '{meeting_id}' 임베딩 생성 완료: {len(chunks)}개 청크")
-            else:
-                logger.warning(f"회의 '{meeting_id}' 청크 생성 실패: 내용이 비어있음")
-
-        except Exception as e:
-            db.rollback()
-            print(f"임베딩 생성 오류: {e}")
-            # 임베딩 생성 실패해도 회의 종료는 성공으로 간주
-            import traceback
-            traceback.print_exc()
+            q.enqueue(retranscribe_meeting, meeting_id, audio_filename)
+        else:
+            # 환경에 Redis가 없으면 동기 실행 (개발/테스트용)
+            retranscribe_meeting(meeting_id, None)
+    except Exception:
+        # 재전사 큐 등록 실패해도 회의 종료는 계속 진행
+        pass
 
     return {
         "message": f"회의가 종료되었습니다. (meeting_id: {meeting_id})",
@@ -489,6 +535,45 @@ async def end_meeting_and_process(
     }
 
 from pathlib import Path
+# ==================== 9. 최종화 진행 상태 조회 ====================
+@router.get("/{meeting_id}/finalization-progress")
+def get_finalization_progress(
+    meeting_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Returns progress flags indicating whether final transcript is done
+    and whether summary, action items, and embeddings have been generated.
+    """
+    meeting = meeting_crud.get_meeting(db=db, meeting_id=meeting_id)
+    if not meeting:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="회의를 찾을 수 없습니다.")
+    if meeting.CREATOR_ID != current_user.USER_ID:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="본인이 생성한 회의만 조회할 수 있습니다.")
+
+    stt_done = (meeting.FINAL_TRANSCRIPT_STATUS == "done" and bool(meeting.FINAL_TRANSCRIPT_TEXT))
+
+    # Summary exists
+    has_summary = db.query(models.Summary).filter(models.Summary.MEETING_ID == meeting_id).count() > 0
+    # Embeddings exist (for reference only, not part of loading completion)
+    has_embeddings = db.query(models.Embedding).filter(models.Embedding.MEETING_ID == meeting_id).count() > 0
+
+    # UI loading finishes when STT + summary are done (action items and embeddings async/optional)
+    all_done = bool(stt_done and has_summary)
+
+    import sys
+    print(f"[finalization-progress] meeting_id={meeting_id}, stt_done={stt_done}, has_summary={has_summary}, all_done={all_done}", file=sys.stderr)
+
+    return {
+        "meeting_id": meeting_id,
+        "stt_done": stt_done,
+        "summary_done": has_summary,
+        "embeddings_done": has_embeddings,
+        "all_done": all_done,
+        "final_transcript_status": meeting.FINAL_TRANSCRIPT_STATUS,
+        "final_transcript_error": meeting.FINAL_TRANSCRIPT_ERROR,
+    }
 
 # ... existing code ...
 
@@ -663,6 +748,45 @@ async def upload_meeting_audio(
         "audio_url": audio_url,
         "file_size": len(content)
     }
+
+# ==================== 8. 회의 재전사 작업 큐 등록 (ElevenLabs) ====================
+@router.post("/{meeting_id}/finalize", status_code=status.HTTP_202_ACCEPTED)
+def finalize_meeting_and_enqueue_stt(
+    meeting_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Post-meeting re-transcription: enqueue RQ job to run ElevenLabs STT on the .wav in audio_storage.
+    Returns a queued status and basic job info.
+    """
+    db_meeting = meeting_crud.get_meeting(db=db, meeting_id=meeting_id)
+    if not db_meeting:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="회의를 찾을 수 없습니다.")
+    if db_meeting.CREATOR_ID != current_user.USER_ID:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="본인이 생성한 회의만 처리할 수 있습니다.")
+
+    # Set status to queued
+    db_meeting.FINAL_TRANSCRIPT_STATUS = "queued"
+    db_meeting.FINAL_TRANSCRIPT_ERROR = None
+    db.commit()
+
+    # Enqueue RQ job
+    redis_url = os.getenv("REDIS_URL")
+    if not redis_url:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="REDIS_URL 환경 변수가 필요합니다.")
+    conn = redis.from_url(redis_url)
+    q = Queue("stt", connection=conn)
+
+    # Determine audio filename
+    audio_path = db_meeting.LOCATION or db_meeting.AUDIO_URL
+    audio_filename = os.path.basename(audio_path) if audio_path else f"{meeting_id}.wav"
+
+    # Import worker task lazily to avoid circular imports
+    from backend.worker import retranscribe_meeting
+    job = q.enqueue(retranscribe_meeting, meeting_id, audio_filename)
+
+    return {"status": "queued", "meeting_id": meeting_id, "job_id": job.id}
 
 # [추가(테스트용)]
 class DummyContentRequest(BaseModel):

@@ -49,6 +49,8 @@ import {
 } from '../../shared/ui/dropdown-menu';
 import { MeetingAnalysis } from '@/features/realtime/MeetingAnalysis';
 import { ScrollToTop } from '@/features/utils/ScrollToTop';
+import { useMeetingArtifacts } from '@/hooks/useMeetingArtifacts';
+import { TranscriptStatusBanner, TranscriptDisplay } from '@/components/TranscriptStatusBanner';
 import { exportToPDF } from '@/utils/exportPDF';
 import { exportToWord } from '@/utils/exportWord';
 import type { Meeting, ActionItem } from '@/features/dashboard/Dashboard';
@@ -91,11 +93,7 @@ export function MeetingDetail({
 
   // Translation states
   const [summaryLang, setSummaryLang] = useState('ko');
-  const [contentLang, setContentLang] = useState(() => {
-    // localStorage에서 마지막 선택 언어 불러오기
-    const savedLang = localStorage.getItem(`meeting-${meeting.id}-content-lang`);
-    return savedLang || 'ko';
-  });
+  const [contentLang, setContentLang] = useState('ko');
   const [translatedSummary, setTranslatedSummary] = useState('');
   const [translatedContent, setTranslatedContent] = useState('');
   const [isTranslating, setIsTranslating] = useState(false);
@@ -112,21 +110,296 @@ export function MeetingDetail({
   // 원문 언어 (현재는 한국어로 고정, 추후 설정에서 변경 가능)
   const sourceLang = 'ko';
   
-  // 언어 코드 매핑
-  const langMap: Record<string, { code: string; name: string; fullName: string }> = {
-    'ko': { code: 'ko', name: '한국어', fullName: 'Korean' },
-    'en': { code: 'en', name: 'English', fullName: 'English' },
-    'ja': { code: 'ja', name: '日本語', fullName: 'Japanese' },
-    'zh': { code: 'zh', name: '中文', fullName: 'Chinese' },
-    'es': { code: 'es', name: 'Español', fullName: 'Spanish' },
-    'fr': { code: 'fr', name: 'Français', fullName: 'French' },
-    'de': { code: 'de', name: 'Deutsch', fullName: 'German' },
+  // 언어별 UI 설정 (정규표현식, 포맷팅 규칙)
+  const langConfig: Record<string, { 
+    code: string; 
+    name: string; 
+    fullName: string;
+    numberFormat?: string; // 숫자 포맷 (예: 1,000 vs 1.000)
+    dateFormat?: string; // 날짜 포맷 (예: YYYY-MM-DD vs DD.MM.YYYY)
+    quotationMark?: { open: string; close: string }; // 인용 부호
+    spaceBeforePunctuation?: boolean; // 문장부호 전 공백 여부
+  }> = {
+    'ko': { 
+      code: 'ko', 
+      name: '한국어', 
+      fullName: 'Korean',
+      numberFormat: 'comma', // 1,000
+      dateFormat: 'YYYY년 MM월 DD일',
+      quotationMark: { open: '「', close: '」' },
+      spaceBeforePunctuation: false
+    },
+    'en': { 
+      code: 'en', 
+      name: 'English', 
+      fullName: 'English',
+      numberFormat: 'comma', // 1,000
+      dateFormat: 'MMMM DD, YYYY',
+      quotationMark: { open: '"', close: '"' },
+      spaceBeforePunctuation: false
+    },
+    'ja': { 
+      code: 'ja', 
+      name: '日本語', 
+      fullName: 'Japanese',
+      numberFormat: 'comma', // 1,000
+      dateFormat: 'YYYY年MM月DD日',
+      quotationMark: { open: '「', close: '」' },
+      spaceBeforePunctuation: false
+    },
+    'zh': { 
+      code: 'zh', 
+      name: '中文', 
+      fullName: 'Chinese',
+      numberFormat: 'comma', // 1,000
+      dateFormat: 'YYYY年MM月DD日',
+      quotationMark: { open: '「', close: '」' },
+      spaceBeforePunctuation: false
+    },
+    'es': { 
+      code: 'es', 
+      name: 'Español', 
+      fullName: 'Spanish',
+      numberFormat: 'dot', // 1.000
+      dateFormat: 'DD de MMMM de YYYY',
+      quotationMark: { open: '«', close: '»' },
+      spaceBeforePunctuation: true
+    },
+    'fr': { 
+      code: 'fr', 
+      name: 'Français', 
+      fullName: 'French',
+      numberFormat: 'dot', // 1.000
+      dateFormat: 'DD MMMM YYYY',
+      quotationMark: { open: '«', close: '»' },
+      spaceBeforePunctuation: true
+    },
+    'de': { 
+      code: 'de', 
+      name: 'Deutsch', 
+      fullName: 'German',
+      numberFormat: 'dot', // 1.000
+      dateFormat: 'DD.MM.YYYY',
+      quotationMark: { open: '„', close: '"' },
+      spaceBeforePunctuation: false
+    },
   };
+  
+  // 언어 코드 매핑 (호환성 유지)
+  const langMap = langConfig;
 
   // Audio states
   const [isPlaying, setIsPlaying] = useState(false);
   const [audioSrc, setAudioSrc] = useState('');
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+
+  // 번역 텍스트에 언어별 포맷팅 적용
+  const formatTranslatedText = (text: string | undefined, targetLang: string): string => {
+    if (!text) return '';
+    
+    const config = langConfig[targetLang];
+    if (!config) return text;
+
+    let formatted = text;
+
+    // 라인별 처리 (타임스탬프와 스피커 정보 유지)
+    const lines = formatted.split('\n');
+    formatted = lines.map(line => {
+      // 타임스탬프 패턴: [HH시 MM분 SS초] 또는 [HH時MM分SS秒] 등
+      const timestampMatch = line.match(/^\[([^\]]+)\]\s*/);
+      const timestamp = timestampMatch ? timestampMatch[0] : '';
+      const contentAfterTimestamp = timestampMatch ? line.substring(timestampMatch[0].length) : line;
+
+      let processedContent = contentAfterTimestamp;
+
+      // 언어별 포맷팅 규칙 적용
+      switch (targetLang) {
+        case 'es': // 스페인어
+          // 문장부호 전 공백 추가
+          processedContent = processedContent
+            .replace(/([^\s])([?!;:])/g, '$1 $2')
+            .replace(/([«])\s+/g, '$1 ')
+            .replace(/\s+([»])/g, ' $1');
+          // 숫자 포맷: 1.000
+          processedContent = processedContent.replace(/(\d{1,3}),(\d{3})/g, '$1.$2');
+          break;
+
+        case 'fr': // 프랑스어
+          // 문장부호 전 공백 추가 (! ? ; :)
+          processedContent = processedContent
+            .replace(/([^\s])(!)/g, '$1 $2')
+            .replace(/([^\s])(\?)/g, '$1 $2')
+            .replace(/([^\s])(;)/g, '$1 $2')
+            .replace(/([^\s])(:)/g, '$1 $2')
+            .replace(/([«])\s+/g, '$1 ')
+            .replace(/\s+([»])/g, ' $1');
+          // 숫자 포맷: 1.000
+          processedContent = processedContent.replace(/(\d{1,3}),(\d{3})/g, '$1.$2');
+          // 대문자 규칙 (문장 시작은 대문자)
+          processedContent = processedContent.replace(/([.!?]\s+)([a-z])/g, (match, p1, p2) => p1 + p2.toUpperCase());
+          break;
+
+        case 'de': // 독일어
+          // 숫자 포맷: 1.000
+          processedContent = processedContent.replace(/(\d{1,3}),(\d{3})/g, '$1.$2');
+          break;
+
+        case 'ja': // 일본어
+          // 숫자 포맷: 1,000 (일본식)
+          processedContent = processedContent.replace(/(\d{1,3})\.(\d{3})/g, '$1,$2');
+          // 마침표 정규화: 。(일본식 마침표)
+          processedContent = processedContent.replace(/\.$/, '。');
+          break;
+
+        case 'zh': // 중국어
+          // 마침표 정규화: 。(중국식 마침표)
+          processedContent = processedContent.replace(/\.$/, '。');
+          break;
+
+        case 'en': // 영어
+          // 숫자 포맷: 1,000
+          processedContent = processedContent.replace(/(\d{1,3})\.(\d{3})/g, '$1,$2');
+          // 대문자 규칙 (문장 시작, 문장부호 후)
+          processedContent = processedContent.replace(/^([a-z])/g, (match) => match.toUpperCase());
+          processedContent = processedContent.replace(/([.!?]\s+)([a-z])/g, (match, p1, p2) => p1 + p2.toUpperCase());
+          break;
+
+        case 'ko': // 한국어
+          // 숫자 포맷: 1,000
+          processedContent = processedContent.replace(/(\d{1,3})\.(\d{3})/g, '$1,$2');
+          break;
+
+        default:
+          break;
+      }
+
+      // 타임스탬프와 함께 반환
+      return timestamp + processedContent;
+    }).join('\n');
+
+    return formatted;
+  };
+
+  // ElevenLabs 재전사 상태 및 폴링 훅
+  const { 
+    artifacts, 
+    isLoading: isLoadingArtifacts, 
+    error: artifactsError, 
+    startPolling, 
+    stopPolling,
+    refetch: refetchArtifacts 
+  } = useMeetingArtifacts(meeting.id);
+
+  // 미팅 ID 변경 시 캐시된 선택 언어 불러오고 자동 번역 수행
+  useEffect(() => {
+    const savedLang = localStorage.getItem(`meeting-${meeting.id}-content-lang`);
+    if (savedLang) {
+      setContentLang(savedLang);
+    } else {
+      setContentLang('ko');
+    }
+  }, [meeting.id]);
+
+  // contentLang 변경 시 자동 번역 (캐시된 언어가 로드되었을 때)
+  useEffect(() => {
+    if (contentLang !== sourceLang && meeting.content) {
+      handleTranslate(meeting.content, contentLang, 'content');
+    } else if (contentLang === sourceLang) {
+      setTranslatedContent('');
+    }
+  }, [contentLang, meeting.content]);
+
+  const [isFinalizingTranscript, setIsFinalizingTranscript] = useState(false);
+  const [finalizationProgress, setFinalizationProgress] = useState<{ all_done: boolean; final_transcript_status: 'queued'|'processing'|'done'|'error'|null; final_transcript_error?: string|null } | null>(null);
+
+  // Poll finalization progress after meeting end until all downstream tasks finish
+  useEffect(() => {
+    let pollingIntervalId: NodeJS.Timeout | null = null;
+
+    const startPolling = async () => {
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+        const res = await fetch(`${apiUrl}/api/v1/meetings/${meeting.id}/finalization-progress`, { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          console.log('[MeetingDetail] Finalization progress:', data);
+          setFinalizationProgress({
+            all_done: !!data.all_done,
+            final_transcript_status: data.final_transcript_status,
+            final_transcript_error: data.final_transcript_error,
+          });
+          
+          // all_done이 true면 즉시 폴링 중지
+          if (data.all_done) {
+            console.log('[MeetingDetail] Polling stopped - all_done=true');
+            if (pollingIntervalId) {
+              clearInterval(pollingIntervalId);
+              pollingIntervalId = null;
+            }
+            return true; // Stop polling
+          }
+        }
+      } catch (e) {
+        console.error('[MeetingDetail] Poll error:', e);
+      }
+      return false; // Continue polling
+    };
+    
+    // 처음 폴링 수행
+    console.log('[MeetingDetail] Starting initial poll for meeting:', meeting.id);
+    startPolling().then(shouldStop => {
+      if (!shouldStop) {
+        // 계속 폴링 필요 - interval 설정
+        console.log('[MeetingDetail] Setting up polling interval...');
+        pollingIntervalId = setInterval(() => {
+          startPolling().then(shouldStop => {
+            if (shouldStop) {
+              console.log('[MeetingDetail] Clearing polling interval');
+              if (pollingIntervalId) {
+                clearInterval(pollingIntervalId);
+                pollingIntervalId = null;
+              }
+            }
+          });
+        }, 1000);
+      }
+    });
+    
+    // Cleanup
+    return () => {
+      if (pollingIntervalId) {
+        clearInterval(pollingIntervalId);
+      }
+    };
+  }, [meeting.id]);
+
+  // 회의 종료 완료 시 artifacts refetch 및 오디오 자동 재로드
+  useEffect(() => {
+    if (finalizationProgress?.all_done === true) {
+      console.log('[MeetingDetail] Finalization completed, refetching artifacts and reloading audio...');
+      
+      // Artifacts 강제 새로고침 (summary, action items, content 데이터 로드)
+      refetchArtifacts();
+      
+      // 오디오 재로드
+      if (audioPlayerRef.current && meeting.audioUrl?.trim()) {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+        const audioApiUrl = `${apiUrl}/api/v1/meetings/${meeting.id}/audio`;
+        
+        fetch(audioApiUrl, { credentials: 'include' })
+          .then(res => res.blob())
+          .then(blob => {
+            const url = URL.createObjectURL(blob);
+            setAudioSrc(url);
+            if (audioPlayerRef.current) {
+              audioPlayerRef.current.src = url;
+              audioPlayerRef.current.load();
+            }
+          })
+          .catch(err => console.error('[MeetingDetail] Audio reload error:', err));
+      }
+    }
+  }, [finalizationProgress?.all_done, meeting.id, refetchArtifacts]);
 
   // Set audio src with token on mount and when audioUrl changes
   useEffect(() => {
@@ -182,13 +455,26 @@ export function MeetingDetail({
     };
   }, [meeting.id, meeting.audioUrl]);
 
-  // 페이지 로드 시 마지막 선택 언어로 자동 번역
+  // artifacts 변경 시 meeting 상태 업데이트 (summary, action_items, content, audio)
   useEffect(() => {
-    if (contentLang !== sourceLang && meeting.content) {
-      console.log(`[MeetingDetail] Auto-loading saved language: ${contentLang}`);
-      handleTranslate(meeting.content, contentLang, 'content');
+    if (artifacts) {
+      console.log('[MeetingDetail] Updating meeting from artifacts:', artifacts);
+      setMeeting(prev => ({
+        ...prev,
+        audioUrl: artifacts.audio_url || prev.audioUrl,
+        summary: artifacts.summary?.content || prev.summary,
+        content: artifacts.final_transcript_text || prev.content,
+        actionItems: artifacts.action_items.map(item => ({
+          id: item.item_id,
+          text: item.title,
+          completed: item.status === 'COMPLETED' || item.status === 'completed',
+          priority: item.priority || undefined,
+          assignee: item.assignee_name || '',
+          dueDate: item.due_dt || '',
+        })) || prev.actionItems,
+      }));
     }
-  }, []); // 빈 배열로 마운트 시에만 실행
+  }, [artifacts]);
 
   // Scroll to section function
   const scrollToSection = (ref: React.RefObject<HTMLDivElement | null>) => {
@@ -306,6 +592,40 @@ export function MeetingDetail({
     }
   };
 
+  const handleFinalizeTranscript = async () => {
+    if (!meeting.audioUrl) {
+      alert('오디오 파일이 없어 재전사를 시작할 수 없습니다.');
+      return;
+    }
+
+    setIsFinalizingTranscript(true);
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiUrl}/api/v1/meetings/${meeting.id}/finalize`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Failed to start transcription' }));
+        console.error('[MeetingDetail] Finalize error:', error);
+        alert(`재전사 시작 실패: ${error.detail || '알 수 없는 오류'}`);
+        return;
+      }
+
+      const result = await response.json();
+      console.log('[MeetingDetail] Finalize started, job_id:', result.job_id);
+      
+      // 폴링 시작
+      startPolling();
+    } catch (error) {
+      console.error('[MeetingDetail] Finalize error:', error);
+      alert('재전사 시작 중 오류가 발생했습니다.');
+    } finally {
+      setIsFinalizingTranscript(false);
+    }
+  };
+
   const handleTranslate = async (text: string, targetLang: string, type: 'summary' | 'content') => {
     // 캐시 확인
     const cacheKey = targetLang;
@@ -345,33 +665,126 @@ export function MeetingDetail({
       if (response.ok) {
         const result = await response.json();
         
-        // 캐시에 저장
-        setTranslationCache(prev => ({
-          ...prev,
-          [type]: {
-            ...prev[type],
-            [cacheKey]: result.translated_text
+        // 캐시된 번역이면 즉시 표시
+        if (result.cached && result.translated_text) {
+          const formattedText = formatTranslatedText(result.translated_text, targetLang);
+          
+          // 캐시에 저장
+          setTranslationCache(prev => ({
+            ...prev,
+            [type]: {
+              ...prev[type],
+              [cacheKey]: formattedText
+            }
+          }));
+          
+          if (type === 'summary') {
+            setTranslatedSummary(formattedText);
+          } else {
+            setTranslatedContent(formattedText);
           }
-        }));
-        
-        if (type === 'summary') {
-          setTranslatedSummary(result.translated_text);
-        } else {
-          setTranslatedContent(result.translated_text);
+          
+          console.log(`[MeetingDetail] Translation loaded from cache: ${sourceLangFull} → ${targetLangFull}`);
+          setIsTranslating(false);
+          return;
         }
         
-        console.log(`[MeetingDetail] Translation completed: ${sourceLangFull} → ${targetLangFull} (cached)`);
+        // Queue에 등록된 경우 - polling 시작 (isTranslating은 유지)
+        if (result.status === 'queued' || result.status === 'processing') {
+          console.log(`[MeetingDetail] Translation queued/processing: ${result.status}`);
+          
+          // Polling 시작
+          pollTranslationStatus(contentType, targetLangFull, type, cacheKey);
+          return;
+        }
+        
+        console.log(`[MeetingDetail] Unexpected response:`, result);
       } else {
         const error = await response.json().catch(() => ({ detail: 'Translation failed' }));
         console.error('[MeetingDetail] Translation error:', error);
         alert(`번역 실패: ${error.detail || '알 수 없는 오류'}`);
+        setIsTranslating(false);
       }
     } catch (error) {
       console.error('[MeetingDetail] Translation error:', error);
       alert('번역 중 오류가 발생했습니다.');
-    } finally {
       setIsTranslating(false);
     }
+  };
+
+  // 번역 상태 polling
+  const pollTranslationStatus = async (
+    contentType: string,
+    targetLangFull: string,
+    type: 'summary' | 'content',
+    cacheKey: string
+  ) => {
+    const maxAttempts = 60; // 5분 (5초 간격)
+    let attempts = 0;
+    
+    const poll = async () => {
+      try {
+        const response = await fetch(
+          `${process.env.NEXT_PUBLIC_API_URL}/api/v1/reports/${meeting.id}/translation-status?content_type=${contentType}`,
+          {
+            credentials: 'include',
+          }
+        );
+        
+        if (response.ok) {
+          const result = await response.json();
+          
+          if (result.status === 'done' && result.translated_text) {
+            // 번역 완료
+            const formattedText = formatTranslatedText(result.translated_text, langMap[targetLangFull.toLowerCase()]?.code || 'en');
+            
+            // 캐시에 저장
+            setTranslationCache(prev => ({
+              ...prev,
+              [type]: {
+                ...prev[type],
+                [cacheKey]: formattedText
+              }
+            }));
+            
+            if (type === 'summary') {
+              setTranslatedSummary(formattedText);
+            } else {
+              setTranslatedContent(formattedText);
+            }
+            
+            console.log(`[MeetingDetail] Translation completed via polling`);
+            setIsTranslating(false);
+          } else if (result.status === 'error') {
+            // 번역 실패
+            console.error('[MeetingDetail] Translation failed:', result.error);
+            alert(`번역 실패: ${result.error || '알 수 없는 오류'}`);
+            setIsTranslating(false);
+          } else if (result.status === 'processing' || result.status === 'queued') {
+            // 계속 polling
+            attempts++;
+            if (attempts < maxAttempts) {
+              setTimeout(poll, 5000); // 5초 후 재시도
+            } else {
+              console.error('[MeetingDetail] Translation polling timeout');
+              alert('번역이 너무 오래 걸립니다. 나중에 다시 시도해주세요.');
+              setIsTranslating(false);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('[MeetingDetail] Polling error:', error);
+        attempts++;
+        if (attempts < maxAttempts) {
+          setTimeout(poll, 5000);
+        } else {
+          setIsTranslating(false);
+        }
+      }
+    };
+    
+    // 첫 polling 시작
+    setTimeout(poll, 2000); // 2초 후 첫 확인
   };
 
   const handleAudioPlayPause = () => {
@@ -446,6 +859,7 @@ export function MeetingDetail({
           
           {/* Desktop Actions */}
           <div className="hidden md:flex gap-2">
+            {/* 재전사 수동 트리거 제거: 회의 종료 시 자동으로 큐 등록됨 */}
             <Button variant="outline" size="sm" onClick={handleExportPDF} className="gap-2">
               <Download className="w-4 h-4" />
               PDF
@@ -499,6 +913,7 @@ export function MeetingDetail({
                   </DropdownMenuItem>
                 </>
               )}
+              {/* 재전사 수동 트리거 제거: 회의 종료 시 자동으로 큐 등록됨 */}
               <DropdownMenuItem onClick={handleDelete} className="text-red-600">
                 <Trash2 className="w-4 h-4 mr-2" />
                 회의록 삭제
@@ -594,6 +1009,15 @@ export function MeetingDetail({
               <span className="text-sm">오디오 파일</span>
             </Button>
           </div>
+
+          {/* 고품질 전사 처리 상태 표시 */}
+          {artifacts?.final_transcript_status && (
+            <TranscriptStatusBanner 
+              status={finalizationProgress?.all_done ? 'done' : (finalizationProgress?.final_transcript_status ?? artifacts.final_transcript_status)}
+              error={finalizationProgress?.final_transcript_error ?? artifacts.final_transcript_error}
+              usedFallback={finalizationProgress?.final_transcript_status === 'error'}
+            />
+          )}
 
           {/* Meeting Summary */}
           <div ref={summaryRef}>
@@ -897,19 +1321,10 @@ export function MeetingDetail({
                         </div>
                       </div>
                     ) : (
-                      <div className="bg-gray-50 rounded-lg p-4 max-h-[500px] overflow-y-auto">
-                        {contentLang !== sourceLang && (
-                          <div className="mb-3 pb-2 border-b border-gray-300 text-xs text-gray-500">
-                            <span className="inline-flex items-center gap-1">
-                              <Languages className="w-3 h-3" />
-                              번역됨: {langMap[sourceLang]?.name} → {langMap[contentLang]?.name}
-                            </span>
-                          </div>
-                        )}
-                        <p className="whitespace-pre-wrap text-gray-700">
-                          {contentLang === sourceLang ? meeting.content : translatedContent || meeting.content}
-                        </p>
-                      </div>
+                      <TranscriptDisplay 
+                        transcript={contentLang === sourceLang ? meeting.content : translatedContent || meeting.content}
+                        isLoading={false}
+                      />
                     )}
                   </CardContent>
                 </CollapsibleContent>
@@ -937,7 +1352,6 @@ export function MeetingDetail({
                 <CollapsibleContent>
                   <CardContent>
                     {meeting.audioUrl && meeting.audioUrl.trim() !== '' ? (
-                      <div className="space-y-4">
                       <div className="bg-gray-50 rounded-lg p-4">
                         <div className="flex items-center justify-between mb-4">
                           <div className="flex items-center gap-3">
@@ -970,11 +1384,10 @@ export function MeetingDetail({
                             });
                           }}
                         />
+                        <p className="text-xs text-gray-500 mt-4">
+                          * 회의 중 녹음된 원본 오디오 파일입니다. 재생 또는 다운로드하여 다시 들을 수 있습니다.
+                        </p>
                       </div>
-                      <p className="text-xs text-gray-500">
-                        * 회의 중 녹음된 원본 오디오 파일입니다. 재생 또는 다운로드하여 다시 들을 수 있습니다.
-                      </p>
-                    </div>
                     ) : (
                       <div className="text-center py-8 text-gray-500">
                         <Volume2 className="w-12 h-12 mx-auto mb-2 text-gray-300" />

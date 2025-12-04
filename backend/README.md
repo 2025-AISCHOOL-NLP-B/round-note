@@ -55,7 +55,7 @@ backend/
     │       ├── retriever.py  # 유사 문서 검색 (의미 기반)
     │       └── vectorstore.py # pgvector 저장소 임베딩 관리
     ├── stt/
-    │   └── service.py        # Deepgram (Pass 1 실시간), ElevenLabs (Pass 2 배치)
+    │   └── service.py        # Deepgram (Pass 1 실시간), ElevenLabs (Pass 2 배치 전사 API 클라이언트)
     ├── storage/
     │   └── service.py        # NCP Object Storage 업로드/다운로드
     └── integrations/
@@ -115,6 +115,7 @@ docker-compose ps
 - `OPENAI_API_KEY` - OpenAI API 키 (LLM, 번역)
 - `DEEPGRAM_API_KEY` - Deepgram STT API 키 (실시간 음성인식)
 - `ELEVENLABS_API_KEY` - ElevenLabs API 키 (고품질 배치 전사)
+- `ELEVENLABS_TRANSCRIBE_URL` - ElevenLabs STT 엔드포인트 (선택, 기본값: `https://api.elevenlabs.io/v1/speech-to-text`)
 
 **NCP Object Storage**
 - `NCP_ENDPOINT_URL` - NCP Object Storage 엔드포인트
@@ -140,7 +141,7 @@ docker-compose ps
 
 ```bash
 # Backend 디렉토리에서 마이그레이션 적용
-alembic upgrade head
+alembic -c backend/alembic.ini upgrade head
 
 # 마이그레이션 생성 (필요시)
 alembic revision --autogenerate -m "description"
@@ -256,6 +257,20 @@ GET    /api/v1/reports/{meeting_id}/action-items 액션 아이템
 GET    /api/v1/reports/{meeting_id}/full        최종 보고서
 GET    /api/v1/reports/{meeting_id}/search      RAG 검색
 POST   /api/v1/reports/{meeting_id}/regenerate  요약 재생성
+
+### 회의 배치 전사 & 산출물 (Meetings Batch STT) - Integration & LLM (정유현)
+```
+POST   /api/v1/meetings/{id}/finalize   배치 전사 작업 큐 등록 (RQ, ElevenLabs)
+GET    /api/v1/meetings/{id}/artifacts  최종 전사/요약/액션아이템 상태 및 결과 조회
+GET    /api/v1/meetings/{id}/audio      회의 오디오(.wav) 다운로드
+POST   /api/v1/meetings/{id}/audio      회의 오디오(.wav) 업로드
+```
+
+**동작 요약:**
+- 업로드된 `.wav` 파일을 기준으로 RQ 작업이 `stt` 큐에 등록됩니다.
+- Worker가 ElevenLabs STT를 호출하여 고품질 전사본을 생성합니다.
+- 전사 완료 후 요약 및 액션 아이템을 자동으로 생성하여 DB에 저장합니다.
+- 프론트엔드는 `/artifacts` 엔드포인트를 폴링하여 상태(`queued|processing|done|error`)와 결과를 표시합니다.
 ```
 
 ---
@@ -484,11 +499,15 @@ logger.error("LLM 요약 오류: %s", str(e))
 1. 회의 종료 → 전체 오디오 NCP에 저장 완료
 2. RQ Worker가 배치 작업 시작
 3. NCP에서 오디오 다운로드
-4. `core/stt/service.py` (ElevenLabs) → 고품질 전사 요청
+4. `core/stt/service.py` (ElevenLabs) → 고품질 전사 요청 (`transcribe_wav`) 
 5. 고품질 전사본 획득 → LangChain 전달
 6. `core/llm/service.py` → 요약 & 액션 아이템 추출
 7. 결과 → DB에 저장 (Summary, ActionItem)
 8. 최종 보고서 생성 → Jira/Notion 연동
+
+**상태 필드 (Meeting):**
+- `FINAL_TRANSCRIPT_STATUS`: `queued|processing|done|error`
+- `FINAL_TRANSCRIPT_TEXT`, `FINAL_TRANSCRIPT_URL`, `FINAL_TRANSCRIPT_ERROR`
 
 **특징:** 높은 정확도, 비용 효율적 (배치), LLM 분석 포함
 
@@ -1192,21 +1211,27 @@ docker-compose logs -f backend
 # FastAPI 자동 문서
 http://localhost:8000/docs
 
-# 마이그레이션 상태 확인
-alembic current
+# 마이그레이션 상태 확인 (backend 설정 파일 사용)
+alembic -c backend/alembic.ini current
 
 # 마이그레이션 히스토리
-alembic history
+alembic -c backend/alembic.ini history
 
 # DB 리셋 (개발용)
-alembic downgrade base
-alembic upgrade head
+alembic -c backend/alembic.ini downgrade base
+alembic -c backend/alembic.ini upgrade head
 
 # PostgreSQL 접속
 docker exec -it roundnote-postgres psql -U roundnote -d roundnote
 
 # Redis CLI
 docker exec -it roundnote-redis redis-cli
+
+# RQ Worker 실행 (로컬 개발)
+set REDIS_URL=redis://localhost:6379/0 && python backend/worker.py
+
+# 또는 PowerShell
+$env:REDIS_URL="redis://localhost:6379/0"; python backend/worker.py
 
 # 컨테이너 로그 확인
 docker-compose logs -f backend
@@ -1228,6 +1253,7 @@ docker-compose up -d
 - [SQLAlchemy ORM](https://docs.sqlalchemy.org/en/20/orm/)
 - [LangChain 문서](https://python.langchain.com/docs/)
 - [Deepgram 실시간 API](https://developers.deepgram.com/reference/streaming)
+- [ElevenLabs STT 문서](https://api.elevenlabs.io) 
 - [OpenAI API](https://platform.openai.com/docs/api-reference)
 - [Alembic 마이그레이션](https://alembic.sqlalchemy.org/)
 - [pgvector 사용 가이드](https://github.com/pgvector/pgvector)
@@ -1245,4 +1271,4 @@ docker-compose up -d
 ---
 
 **마지막 업데이트:** 2025-11-17  
-**버전:** V2.1
+**버전:** V2.2 (ElevenLabs 배치 전사 + RQ 연동)
