@@ -466,9 +466,9 @@ export function MeetingDetail({
           id: item.item_id,
           text: item.title,
           completed: item.status === 'COMPLETED' || item.status === 'completed',
-          priority: item.priority,
-          assignee: item.assignee_name,
-          dueDate: item.due_dt,
+          priority: item.priority || undefined,
+          assignee: item.assignee_name || '',
+          dueDate: item.due_dt || '',
         })) || prev.actionItems,
       }));
     }
