@@ -141,6 +141,96 @@ export function MeetingDetail({
   } = useMeetingArtifacts(meeting.id);
 
   const [isFinalizingTranscript, setIsFinalizingTranscript] = useState(false);
+  const [finalizationProgress, setFinalizationProgress] = useState<{ all_done: boolean; final_transcript_status: 'queued'|'processing'|'done'|'error'|null; final_transcript_error?: string|null } | null>(null);
+
+  // Poll finalization progress after meeting end until all downstream tasks finish
+  useEffect(() => {
+    let pollingIntervalId: NodeJS.Timeout | null = null;
+
+    const startPolling = async () => {
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+        const res = await fetch(`${apiUrl}/api/v1/meetings/${meeting.id}/finalization-progress`, { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          console.log('[MeetingDetail] Finalization progress:', data);
+          setFinalizationProgress({
+            all_done: !!data.all_done,
+            final_transcript_status: data.final_transcript_status,
+            final_transcript_error: data.final_transcript_error,
+          });
+          
+          // all_done이 true면 즉시 폴링 중지
+          if (data.all_done) {
+            console.log('[MeetingDetail] Polling stopped - all_done=true');
+            if (pollingIntervalId) {
+              clearInterval(pollingIntervalId);
+              pollingIntervalId = null;
+            }
+            return true; // Stop polling
+          }
+        }
+      } catch (e) {
+        console.error('[MeetingDetail] Poll error:', e);
+      }
+      return false; // Continue polling
+    };
+    
+    // 처음 폴링 수행
+    console.log('[MeetingDetail] Starting initial poll for meeting:', meeting.id);
+    startPolling().then(shouldStop => {
+      if (!shouldStop) {
+        // 계속 폴링 필요 - interval 설정
+        console.log('[MeetingDetail] Setting up polling interval...');
+        pollingIntervalId = setInterval(() => {
+          startPolling().then(shouldStop => {
+            if (shouldStop) {
+              console.log('[MeetingDetail] Clearing polling interval');
+              if (pollingIntervalId) {
+                clearInterval(pollingIntervalId);
+                pollingIntervalId = null;
+              }
+            }
+          });
+        }, 1000);
+      }
+    });
+    
+    // Cleanup
+    return () => {
+      if (pollingIntervalId) {
+        clearInterval(pollingIntervalId);
+      }
+    };
+  }, [meeting.id]);
+
+  // 회의 종료 완료 시 artifacts refetch 및 오디오 자동 재로드
+  useEffect(() => {
+    if (finalizationProgress?.all_done === true) {
+      console.log('[MeetingDetail] Finalization completed, refetching artifacts and reloading audio...');
+      
+      // Artifacts 강제 새로고침 (summary, action items, content 데이터 로드)
+      refetchArtifacts();
+      
+      // 오디오 재로드
+      if (audioPlayerRef.current && meeting.audioUrl?.trim()) {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+        const audioApiUrl = `${apiUrl}/api/v1/meetings/${meeting.id}/audio`;
+        
+        fetch(audioApiUrl, { credentials: 'include' })
+          .then(res => res.blob())
+          .then(blob => {
+            const url = URL.createObjectURL(blob);
+            setAudioSrc(url);
+            if (audioPlayerRef.current) {
+              audioPlayerRef.current.src = url;
+              audioPlayerRef.current.load();
+            }
+          })
+          .catch(err => console.error('[MeetingDetail] Audio reload error:', err));
+      }
+    }
+  }, [finalizationProgress?.all_done, meeting.id, refetchArtifacts]);
 
   // Set audio src with token on mount and when audioUrl changes
   useEffect(() => {
@@ -196,13 +286,26 @@ export function MeetingDetail({
     };
   }, [meeting.id, meeting.audioUrl]);
 
-  // 페이지 로드 시 마지막 선택 언어로 자동 번역
+  // artifacts 변경 시 meeting 상태 업데이트 (summary, action_items, content, audio)
   useEffect(() => {
-    if (contentLang !== sourceLang && meeting.content) {
-      console.log(`[MeetingDetail] Auto-loading saved language: ${contentLang}`);
-      handleTranslate(meeting.content, contentLang, 'content');
+    if (artifacts) {
+      console.log('[MeetingDetail] Updating meeting from artifacts:', artifacts);
+      setMeeting(prev => ({
+        ...prev,
+        audioUrl: artifacts.audio_url || prev.audioUrl,
+        summary: artifacts.summary?.content || prev.summary,
+        content: artifacts.final_transcript_text || prev.content,
+        actionItems: artifacts.action_items.map(item => ({
+          id: item.item_id,
+          text: item.title,
+          completed: item.status === 'COMPLETED' || item.status === 'completed',
+          priority: item.priority,
+          assignee: item.assignee_name,
+          dueDate: item.due_dt,
+        })) || prev.actionItems,
+      }));
     }
-  }, []); // 빈 배열로 마운트 시에만 실행
+  }, [artifacts]);
 
   // Scroll to section function
   const scrollToSection = (ref: React.RefObject<HTMLDivElement | null>) => {
@@ -494,16 +597,7 @@ export function MeetingDetail({
           
           {/* Desktop Actions */}
           <div className="hidden md:flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleFinalizeTranscript}
-              disabled={isFinalizingTranscript || !meeting.audioUrl}
-              className="gap-2"
-            >
-              <Mic className="w-4 h-4" />
-              {isFinalizingTranscript ? '재전사 중…' : '회의 재전사'}
-            </Button>
+            {/* 재전사 수동 트리거 제거: 회의 종료 시 자동으로 큐 등록됨 */}
             <Button variant="outline" size="sm" onClick={handleExportPDF} className="gap-2">
               <Download className="w-4 h-4" />
               PDF
@@ -557,13 +651,7 @@ export function MeetingDetail({
                   </DropdownMenuItem>
                 </>
               )}
-              <DropdownMenuItem 
-                onClick={handleFinalizeTranscript}
-                disabled={isFinalizingTranscript || !meeting.audioUrl}
-              >
-                <Mic className="w-4 h-4 mr-2" />
-                {isFinalizingTranscript ? '재전사 시작 중...' : '회의 재전사'}
-              </DropdownMenuItem>
+              {/* 재전사 수동 트리거 제거: 회의 종료 시 자동으로 큐 등록됨 */}
               <DropdownMenuItem onClick={handleDelete} className="text-red-600">
                 <Trash2 className="w-4 h-4 mr-2" />
                 회의록 삭제
@@ -660,32 +748,13 @@ export function MeetingDetail({
             </Button>
           </div>
 
-          {/* ElevenLabs 재전사 상태 및 결과 */}
+          {/* 고품질 전사 처리 상태 표시 */}
           {artifacts?.final_transcript_status && (
-            <>
-              <TranscriptStatusBanner 
-                status={artifacts.final_transcript_status}
-                error={artifacts.final_transcript_error}
-                onRetry={handleFinalizeTranscript}
-              />
-              
-              {artifacts.final_transcript_status === 'done' && artifacts.final_transcript_text && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Mic className="w-5 h-5" />
-                      최종 전사 원문 (ElevenLabs)
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <TranscriptDisplay 
-                      transcript={artifacts.final_transcript_text}
-                      isLoading={artifacts.final_transcript_status === 'processing' || artifacts.final_transcript_status === 'queued'}
-                    />
-                  </CardContent>
-                </Card>
-              )}
-            </>
+            <TranscriptStatusBanner 
+              status={finalizationProgress?.all_done ? 'done' : (finalizationProgress?.final_transcript_status ?? artifacts.final_transcript_status)}
+              error={finalizationProgress?.final_transcript_error ?? artifacts.final_transcript_error}
+              usedFallback={finalizationProgress?.final_transcript_status === 'error'}
+            />
           )}
 
           {/* Meeting Summary */}
@@ -990,19 +1059,10 @@ export function MeetingDetail({
                         </div>
                       </div>
                     ) : (
-                      <div className="bg-gray-50 rounded-lg p-4 max-h-[500px] overflow-y-auto">
-                        {contentLang !== sourceLang && (
-                          <div className="mb-3 pb-2 border-b border-gray-300 text-xs text-gray-500">
-                            <span className="inline-flex items-center gap-1">
-                              <Languages className="w-3 h-3" />
-                              번역됨: {langMap[sourceLang]?.name} → {langMap[contentLang]?.name}
-                            </span>
-                          </div>
-                        )}
-                        <p className="whitespace-pre-wrap text-gray-700">
-                          {contentLang === sourceLang ? meeting.content : translatedContent || meeting.content}
-                        </p>
-                      </div>
+                      <TranscriptDisplay 
+                        transcript={contentLang === sourceLang ? meeting.content : translatedContent || meeting.content}
+                        isLoading={false}
+                      />
                     )}
                   </CardContent>
                 </CollapsibleContent>

@@ -4,6 +4,7 @@ interface TranscriptStatusBannerProps {
   status: 'queued' | 'processing' | 'done' | 'error' | null;
   error?: string | null;
   onRetry?: () => void;
+  usedFallback?: boolean; // STT 실패 후 실시간 전사로 대체 여부
 }
 
 /**
@@ -13,6 +14,7 @@ export function TranscriptStatusBanner({
   status,
   error,
   onRetry,
+  usedFallback,
 }: TranscriptStatusBannerProps) {
   if (!status || status === 'done') {
     return null; // 상태 없거나 완료 시 배너 숨김
@@ -32,8 +34,8 @@ export function TranscriptStatusBanner({
         return {
           bg: 'bg-yellow-50 border-yellow-200',
           icon: '🔄',
-          title: '전사 진행 중',
-          message: 'ElevenLabs API를 통해 전사를 생성하고 있습니다...',
+          title: '처리 진행 중',
+          message: '고품질 전사본 생성 및 요약/액션아이템 추출 중입니다...',
           textColor: 'text-yellow-800',
         };
       case 'error':
@@ -41,7 +43,9 @@ export function TranscriptStatusBanner({
           bg: 'bg-red-50 border-red-200',
           icon: '❌',
           title: '전사 실패',
-          message: error || '전사 중 오류가 발생했습니다.',
+          message: usedFallback
+            ? (error ? `전사 실패: ${error} — 실시간 전사본으로 대체하여 요약/임베딩을 생성했습니다.` : '전사 실패 — 실시간 전사본으로 대체하여 요약/임베딩을 생성했습니다.')
+            : (error || '전사 중 오류가 발생했습니다.'),
           textColor: 'text-red-800',
         };
       default:

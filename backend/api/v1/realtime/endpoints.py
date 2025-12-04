@@ -598,18 +598,28 @@ async def get_translation_and_send(client_ws: WebSocket, text: str, llm_service:
     """
     logging.info(f"Translation Task Started for: {text}")
     try:
+        # WebSocket 연결 상태 확인
+        if client_ws.client_state.name != 'CONNECTED':
+            logging.warning(f"WebSocket not connected, skipping translation send")
+            return
+        
         # 1. core/llm_service.py의 코어 함수 호출 (실제 API 통신)
         translated_text = await llm_service.get_translation(text)
 
         # 2. 번역 결과를 React로 전송 (논블로킹)
-        await client_ws.send_json({
-            "type": "translation",
-            "original_text": text,
-            "translated_text": translated_text
-        })
+        if client_ws.client_state.name == 'CONNECTED':
+          await client_ws.send_json({
+              "type": "translation",
+              "original_text": text,
+              "translated_text": translated_text
+          })
         logging.info(f"Translation Task Finished for: {text}")
         
     except Exception as e:
         logging.error(f"OpenAI 번역 오류: {e}")
-        # 오류 발생 시 클라이언트에게 알림
-        await client_ws.send_json({"type": "error", "message": f"Translation failed: {e}"})
+        # 오류 발생 시 클라이언트에게 알림 (연결 상태 확인 후)
+        try:
+            if client_ws.client_state.name == 'CONNECTED':
+                await client_ws.send_json({"type": "error", "message": f"Translation failed: {e}"})
+        except Exception as send_error:
+            logging.warning(f"Failed to send error to client: {send_error}")

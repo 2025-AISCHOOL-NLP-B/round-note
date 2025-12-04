@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 
 export interface MeetingArtifacts {
   meeting_id: string;
+  audio_url?: string; // 오디오 파일 URL
   final_transcript_status: 'queued' | 'processing' | 'done' | 'error' | null;
   final_transcript_error: string | null;
   final_transcript_url: string | null;

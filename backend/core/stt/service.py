@@ -202,7 +202,7 @@ class STTService:
         }
 
         try:
-            logger.info("Calling ElevenLabs STT", extra={
+            logger.info("Calling ElevenLabs batch STT", extra={
                 "service": "stt",
                 "provider": "elevenlabs",
                 "file": os.path.basename(file_path)
