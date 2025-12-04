@@ -1,8 +1,16 @@
 import os
+import sys
 import redis
 from rq import Worker, Queue
 from pathlib import Path
 from sqlalchemy.orm import Session
+
+# Render에서 Root Directory가 backend로 설정된 경우 대응
+# 현재 디렉토리가 backend/이면 부모를 sys.path에 추가
+current_dir = Path(__file__).resolve().parent
+if current_dir.name == 'backend':
+    sys.path.insert(0, str(current_dir.parent))
+
 from backend.database import SessionLocal
 from backend import models
 from backend.core.stt.service import STTService

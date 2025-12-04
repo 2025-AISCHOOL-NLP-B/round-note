@@ -538,8 +538,10 @@ async def end_meeting_and_process(
             retranscribe_meeting(meeting_id, None)
     except Exception as e:
         # 재전사 큐 등록 실패해도 회의 종료는 계속 진행
-        logger.error(f"❌ Failed to enqueue retranscription: {str(e)}", exc_info=True)
-        pass
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"❌ [END MEETING] Failed to enqueue retranscription: {str(e)}", exc_info=True)
+        print(f"❌ [END MEETING] Failed to enqueue retranscription: {str(e)}")  # stdout도 출력
 
     return {
         "message": f"회의가 종료되었습니다. (meeting_id: {meeting_id})",
