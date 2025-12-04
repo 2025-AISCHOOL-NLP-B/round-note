@@ -297,9 +297,114 @@ def summarize_meeting_from_final_transcript(meeting_id: str) -> dict:
     finally:
         db.close()
 
+
+def translate_meeting_content(meeting_id: str, content_type: str, source_lang: str = "Korean", target_lang: str = "English") -> dict:
+    """
+    Translate meeting content (summary or transcript) in background.
+    
+    Args:
+        meeting_id: Meeting ID
+        content_type: "summary" or "transcript"
+        source_lang: Source language (default: "Korean")
+        target_lang: Target language (default: "English")
+    """
+    db: Session = SessionLocal()
+    try:
+        print(f"[Worker] Translation job started for {meeting_id} ({content_type} -> {target_lang})")
+        
+        meeting = db.query(models.Meeting).filter(models.Meeting.MEETING_ID == meeting_id).first()
+        if not meeting:
+            print(f"[Worker] Meeting not found: {meeting_id}")
+            return {"success": False, "message": "Meeting not found", "meeting_id": meeting_id}
+        
+        llm = LLMService()
+        
+        if content_type == "summary":
+            # Translate summary
+            summary = db.query(models.Summary).filter(models.Summary.MEETING_ID == meeting_id).first()
+            if not summary:
+                print(f"[Worker] Summary not found for {meeting_id}")
+                return {"success": False, "message": "Summary not found", "meeting_id": meeting_id}
+            
+            # Update status to processing
+            summary.TRANSLATION_STATUS = "processing"
+            summary.TRANSLATION_TARGET_LANG = target_lang
+            summary.TRANSLATION_ERROR = None
+            db.commit()
+            
+            # Perform translation (blocking async call)
+            import asyncio
+            async def _translate():
+                return await llm.get_translation(summary.CONTENT, source_lang=source_lang, target_lang=target_lang)
+            
+            translated_text = asyncio.get_event_loop().run_until_complete(_translate())
+            
+            # Save with language tag
+            summary.TRANSLATED_CONTENT = f"[{target_lang}]|{translated_text}"
+            summary.TRANSLATION_STATUS = "done"
+            db.commit()
+            
+            print(f"[Worker] Summary translation completed for {meeting_id}")
+            return {"success": True, "meeting_id": meeting_id, "content_type": "summary", "target_lang": target_lang}
+            
+        elif content_type == "transcript":
+            # Translate transcript
+            if not meeting.CONTENT:
+                print(f"[Worker] No transcript found for {meeting_id}")
+                return {"success": False, "message": "No transcript found", "meeting_id": meeting_id}
+            
+            # Update status to processing
+            meeting.TRANSLATION_STATUS = "processing"
+            meeting.TRANSLATION_TARGET_LANG = target_lang
+            meeting.TRANSLATION_ERROR = None
+            db.commit()
+            
+            # Perform translation (blocking async call)
+            import asyncio
+            async def _translate():
+                return await llm.get_translation(meeting.CONTENT, source_lang=source_lang, target_lang=target_lang)
+            
+            translated_text = asyncio.get_event_loop().run_until_complete(_translate())
+            
+            # Save with language tag
+            meeting.TRANSLATED_CONTENT = f"[{target_lang}]|{translated_text}"
+            meeting.TRANSLATION_STATUS = "done"
+            db.commit()
+            
+            print(f"[Worker] Transcript translation completed for {meeting_id}")
+            return {"success": True, "meeting_id": meeting_id, "content_type": "transcript", "target_lang": target_lang}
+            
+        else:
+            return {"success": False, "message": "Invalid content_type", "meeting_id": meeting_id}
+            
+    except Exception as e:
+        print(f"[Worker] Translation job error for {meeting_id}: {e}")
+        db.rollback()
+        
+        # Update error status
+        try:
+            if content_type == "summary":
+                summary = db.query(models.Summary).filter(models.Summary.MEETING_ID == meeting_id).first()
+                if summary:
+                    summary.TRANSLATION_STATUS = "error"
+                    summary.TRANSLATION_ERROR = str(e)
+            else:
+                meeting = db.query(models.Meeting).filter(models.Meeting.MEETING_ID == meeting_id).first()
+                if meeting:
+                    meeting.TRANSLATION_STATUS = "error"
+                    meeting.TRANSLATION_ERROR = str(e)
+            db.commit()
+        except Exception:
+            pass
+            
+        return {"success": False, "meeting_id": meeting_id, "error": str(e)}
+    finally:
+        db.close()
+
+
 if __name__ == '__main__':
-    # Listen on queues used for retranscription and future tasks
-    listen = ['high-priority-queue', 'stt']
+    # Listen on queues used for retranscription, translation and future tasks
+    listen = ['high-priority-queue', 'stt', 'translation']
 
     print(f"'{listen}' 큐를 감시합니다. 새 작업을 기다립니다...")
 

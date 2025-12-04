@@ -120,6 +120,10 @@ class Meeting(Base):
     FINAL_TRANSCRIPT_URL = Column(TEXT, nullable=True)
     FINAL_TRANSCRIPT_STATUS = Column(TEXT, nullable=True)  # queued|processing|done|error
     FINAL_TRANSCRIPT_ERROR = Column(TEXT, nullable=True)
+    # Translation status tracking
+    TRANSLATION_STATUS = Column(TEXT, nullable=True)  # queued|processing|done|error
+    TRANSLATION_ERROR = Column(TEXT, nullable=True)
+    TRANSLATION_TARGET_LANG = Column(TEXT, nullable=True)  # en, ja, zh, etc.
 
     # 관계
     creator = relationship(
@@ -200,6 +204,10 @@ class Summary(Base):
     CONTENT = Column(TEXT, nullable=False)
     # 번역된 요약 내용
     TRANSLATED_CONTENT = Column(TEXT, nullable=True)
+    # Translation status tracking for summaries
+    TRANSLATION_STATUS = Column(TEXT, nullable=True)  # queued|processing|done|error
+    TRANSLATION_ERROR = Column(TEXT, nullable=True)
+    TRANSLATION_TARGET_LANG = Column(TEXT, nullable=True)  # en, ja, zh, etc.
     PROMPT_ID = Column(TEXT, nullable=True)
     CREATED_DT = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
 
