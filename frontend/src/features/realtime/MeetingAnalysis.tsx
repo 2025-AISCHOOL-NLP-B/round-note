@@ -632,6 +632,12 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
   };
 
   const extractParticipants = () => {
+    // Prioritize participants from PARTICIPANTS field (set during meeting)
+    if (meeting.participants && meeting.participants.length > 0) {
+      return meeting.participants;
+    }
+    
+    // Fallback: extract from action items and content
     const participants = new Set<string>();
     meeting.actionItems.forEach(item => {
       if (item.assignee && item.assignee !== '미정') {

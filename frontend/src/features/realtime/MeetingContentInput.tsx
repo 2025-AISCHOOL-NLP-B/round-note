@@ -463,7 +463,17 @@ export function MeetingContentInput({ meetingInfo, meetingMode, onComplete, onBa
 
     // 최종 UI 정리
     setTimeout(() => {
-      onComplete(content, { audioBlob: recordedAudioBlob, ...regen }, currentMeetingId);
+      // localParticipants를 배열로 변환해서 aiAnalysis에 포함
+      const participantsArray = localParticipants
+        .split(',')
+        .map(p => p.trim())
+        .filter(p => p.length > 0);
+      
+      onComplete(content, { 
+        audioBlob: recordedAudioBlob, 
+        participants: participantsArray,
+        ...regen 
+      }, currentMeetingId);
       setContent('');
       // Reset audio chunks for next recording
       audioChunksRef.current = [];

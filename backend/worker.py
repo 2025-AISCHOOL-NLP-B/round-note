@@ -16,6 +16,7 @@ from backend import models
 from backend.core.stt.service import STTService
 from backend.core.llm.service import LLMService
 import ulid
+import importlib
 
 print("RQ Worker(일꾼) 프로세스가 시작됩니다...")
 
@@ -111,9 +112,28 @@ def retranscribe_meeting(meeting_id: str, audio_filename: str | None = None) -> 
             db.commit()
             return {"success": False, "message": "Audio file not found", "filename": filename}
 
-        # Run ElevenLabs STT with meeting start time
-        stt = STTService()
-        text, raw = stt.transcribe_wav(audio_path, language="ko", meeting_start_time=meeting.START_DT)
+        # Force reload STT service module to ensure latest code
+        import backend.core.stt.service
+        importlib.reload(backend.core.stt.service)
+        from backend.core.stt.service import STTService as FreshSTTService
+        
+        # Run ElevenLabs STT with meeting start time and num_speakers hint
+        stt = FreshSTTService()
+        
+        # DEBUG: Check loaded module file path and method signature
+        import inspect
+        stt_module = inspect.getfile(FreshSTTService)
+        transcribe_method = inspect.signature(stt.transcribe_wav)
+        print(f"[Worker DEBUG] STTService loaded from: {stt_module}")
+        print(f"[Worker DEBUG] transcribe_wav signature: {transcribe_method}")
+        
+        # Get num_speakers from PARTICIPANTS field if available
+        num_speakers = None
+        if meeting.PARTICIPANTS and isinstance(meeting.PARTICIPANTS, list):
+            num_speakers = len(meeting.PARTICIPANTS)
+            print(f"[Worker] Using num_speakers hint: {num_speakers} from PARTICIPANTS field")
+        
+        text, raw = stt.transcribe_wav(audio_path, language="ko", meeting_start_time=meeting.START_DT, num_speakers=num_speakers)
         if text:
             meeting.FINAL_TRANSCRIPT_TEXT = text
             meeting.FINAL_TRANSCRIPT_STATUS = "done"

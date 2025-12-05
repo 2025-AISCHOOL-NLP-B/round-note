@@ -69,12 +69,26 @@ async def websocket_endpoint(
     try:
         # 참여자 이름을 키워드 리스트로 파싱
         keywords = []
+        participant_list = []  # 원본 참여자 목록 저장용 (한글 포함)
         if participants:
             # 쉼표로 구분된 이름들을 리스트로 변환
-            keywords = [name.strip() for name in participants.split(",") if name.strip()]
-            logging.info(f"키워드 부스팅 활성화: {keywords}")
+            participant_list = [name.strip() for name in participants.split(",") if name.strip()]
+            logging.info(f"[WebSocket] Received participants from URL: {participant_list}")
+            
+            # Deepgram은 ASCII 문자만 지원하므로, 한글/특수문자 필터링
+            # ASCII 문자만 포함된 이름들만 키워드로 사용
+            keywords = [name for name in participant_list if all(ord(c) < 128 for c in name)]
+            
+            if keywords:
+                logging.info(f"키워드 부스팅 활성화: {keywords} (ASCII 이름 수: {len(keywords)})")
+            if len(keywords) < len(participant_list):
+                non_ascii_count = len(participant_list) - len(keywords)
+                logging.info(f"비-ASCII 이름 {non_ascii_count}개는 키워드 부스팅에서 제외됨")
+        else:
+            logging.info(f"[WebSocket] No participants received from URL")
         
         # 요청된 채널 수와 키워드에 맞춰 Deepgram URL 생성
+        # keywords가 있으면 자동으로 num_speakers hint가 설정됨
         dg_url, dg_headers = stt_service.get_realtime_stt_url(channels=channels, keywords=keywords)
         
         # meetingId가 있으면 해당 ID로 파일 생성, 없으면 랜덤 생성
@@ -171,7 +185,7 @@ async def websocket_endpoint(
                     except Exception as e:
                         logging.error(f"Failed to rename audio file: {e}")
 
-                # DB Update: meetingId가 있으면 오디오 경로 업데이트
+                # DB Update: meetingId가 있으면 오디오 경로 및 참여자 정보 업데이트
                 if final_meeting_id:
                     try:
                         # Use relative path for portability
@@ -183,6 +197,14 @@ async def websocket_endpoint(
                             if meeting:
                                 meeting.AUDIO_URL = relative_path
                                 meeting.LOCATION = relative_path
+                                
+                                # 참여자 목록을 PARTICIPANTS 필드에 저장 (원본 목록 사용: 한글 포함)
+                                if participant_list:
+                                    meeting.PARTICIPANTS = participant_list
+                                    logging.info(f"[WebSocket] ✅ Updated meeting {final_meeting_id} PARTICIPANTS field: {participant_list}")
+                                else:
+                                    logging.info(f"[WebSocket] ⚠️ No participant_list to save for meeting {final_meeting_id}")
+                                
                                 db.commit()
                                 logging.info(f"Updated meeting {final_meeting_id} audio_url to {relative_path}")
                             else:

@@ -32,6 +32,8 @@ services:
     environment:
       - PYTHONPATH=/app
       - ENVIRONMENT=development
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
     ports:
       - "8000:8000"
     depends_on:

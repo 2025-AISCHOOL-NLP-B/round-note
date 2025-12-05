@@ -131,6 +131,10 @@ def end_meeting(
         # 로컬 파일 경로면 LOCATION에도 저장 (blob: URL이 아닌 경우)
         if not audio_url.startswith('blob:'):
             meeting.LOCATION = audio_url
+    
+    # 참여자 정보 저장 (기본값으로 설정될 참여자 정보)
+    if getattr(end_request, "participants", None) is not None:
+        meeting.PARTICIPANTS = end_request.participants
 
     db.commit()
     db.refresh(meeting)
