@@ -1,16 +1,17 @@
 #!/bin/bash
 set -e
 
-# 작업 디렉토리를 backend로 이동
-cd /app/backend
+# 작업 디렉토리를 스크립트 위치(backend)로 이동
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
 
 # 현재 디렉토리 출력 (디버깅용)
 echo "Current directory: $(pwd)"
 echo "Files in current directory:"
 ls -la
 
-# 환경 변수 설정
-export PYTHONPATH=/app:$PYTHONPATH
+# 환경 변수 설정 (프로젝트 루트를 PYTHONPATH에 포함)
+export PYTHONPATH="${SCRIPT_DIR}/..:${PYTHONPATH}"
 
 # DB 마이그레이션
 echo "=========================================="
