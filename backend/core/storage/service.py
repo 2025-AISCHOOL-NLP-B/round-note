@@ -128,3 +128,36 @@ class StorageService:
         except Exception as e:
             logging.error(f"NCP Object Storage 알 수 없는 오류: {e}")
             raise e
+    
+    def download_from_ncp(self, object_name: str, local_path: str) -> bool:
+        """
+        NCP Object Storage에서 파일을 다운로드합니다.
+        
+        Args:
+            object_name: NCP에 저장된 객체 이름 (예: meeting_id.wav)
+            local_path: 다운로드할 로컬 경로
+            
+        Returns:
+            성공 시 True, 실패 시 False
+        """
+        if not self.s3:
+            logging.error("NCP Object Storage 클라이언트가 초기화되지 않았습니다.")
+            return False
+        
+        try:
+            # 디렉토리 생성
+            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+            
+            self.s3.download_file(self.ncp_bucket_name, object_name, local_path)
+            logging.info(f"✅ NCP에서 다운로드 성공: {self.ncp_bucket_name}/{object_name} -> {local_path}")
+            return True
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            if error_code == 'NoSuchKey' or error_code == '404':
+                logging.warning(f"⚠️ NCP에 파일이 없음: {object_name}")
+            else:
+                logging.error(f"❌ NCP 다운로드 실패: {e}")
+            return False
+        except Exception as e:
+            logging.error(f"❌ NCP 다운로드 중 알 수 없는 오류: {e}")
+            return False

@@ -75,7 +75,13 @@ def retranscribe_meeting(meeting_id: str, audio_filename: str | None = None) -> 
         meeting.FINAL_TRANSCRIPT_ERROR = None
         db.commit()
 
-        # Resolve audio path
+        # Resolve audio path from shared disk or local directories
+        filename = audio_filename or (os.path.basename(meeting.LOCATION) if meeting.LOCATION else f"{meeting_id}.wav")
+        audio_path = None
+        
+        print(f"🔍 [WORKER] 오디오 파일 탐색: {filename}")
+        
+        # Render Disk 또는 로컬 경로에서 파일 찾기
         possible_dirs = []
         if os.path.exists('/app/audio_storage'):
             possible_dirs.append('/app/audio_storage')
@@ -87,16 +93,19 @@ def retranscribe_meeting(meeting_id: str, audio_filename: str | None = None) -> 
         possible_dirs.append(os.path.abspath('./audio_storage'))
         possible_dirs.append(os.path.abspath('../audio_storage'))
         possible_dirs.append(os.path.abspath('./backend/audio_storage'))
-
-        filename = audio_filename or (os.path.basename(meeting.LOCATION) if meeting.LOCATION else f"{meeting_id}.wav")
-        audio_path = None
+        
+        print(f"📂 [WORKER] 탐색 경로: {possible_dirs}")
+        
         for base in possible_dirs:
             candidate = os.path.join(base, filename)
+            print(f"   검사 중: {candidate}")
             if os.path.exists(candidate):
                 audio_path = candidate
+                print(f"✅ [WORKER] 파일 발견: {audio_path}")
                 break
 
         if not audio_path:
+            print(f"❌ [WORKER] 오디오 파일을 찾을 수 없음: {filename}")
             meeting.FINAL_TRANSCRIPT_STATUS = "error"
             meeting.FINAL_TRANSCRIPT_ERROR = f"Audio file not found: {filename}"
             db.commit()
@@ -177,7 +186,7 @@ def retranscribe_meeting(meeting_id: str, audio_filename: str | None = None) -> 
             
             # Commit all changes in one transaction
             db.commit()
-            print(f"[Worker] All tasks completed for {meeting_id}")
+            print(f"✅ [WORKER] All tasks completed for {meeting_id}")
             
             return {"success": True, "meeting_id": meeting_id, "length": len(text or "")}
         else:
@@ -428,7 +437,8 @@ def translate_meeting_content(meeting_id: str, content_type: str, source_lang: s
         db.close()
 
 
-if __name__ == '__main__':
+def main():
+    """RQ Worker 메인 함수"""
     # Listen on queues used for retranscription, translation and future tasks
     listen = ['high-priority-queue', 'stt', 'translation']
 
@@ -450,4 +460,14 @@ if __name__ == '__main__':
     print("⏳ 새 작업을 기다립니다...\n")
 
     # work()는 무한 루프입니다. 이 프로세스는 종료되지 않고 계속 실행됩니다.
-    worker.work()
+    try:
+        worker.work(with_scheduler=True)
+    except KeyboardInterrupt:
+        print("\n\n" + "=" * 70)
+        print("⏹️  Worker 종료 신호 수신")
+        print("=" * 70)
+        raise
+
+
+if __name__ == '__main__':
+    main()
