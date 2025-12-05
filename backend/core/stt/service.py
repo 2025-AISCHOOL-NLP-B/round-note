@@ -202,18 +202,30 @@ class STTService:
         }
 
         try:
-            logger.info("Calling ElevenLabs batch STT", extra={
-                "service": "stt",
-                "provider": "elevenlabs",
-                "file": os.path.basename(file_path)
-            })
-            resp: Response = requests.post(
-                self.ELEVENLABS_TRANSCRIBE_URL,
-                headers=headers,
-                files=files,
-                data=data,
-                timeout=60
-            )
+            max_attempts = 3
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    logger.info("Calling ElevenLabs batch STT", extra={
+                        "service": "stt",
+                        "provider": "elevenlabs",
+                        "file": os.path.basename(file_path),
+                        "attempt": attempt
+                    })
+                    resp: Response = requests.post(
+                        self.ELEVENLABS_TRANSCRIBE_URL,
+                        headers=headers,
+                        files=files,
+                        data=data,
+                        timeout=180  # increase read timeout
+                    )
+                    break
+                except requests.exceptions.ReadTimeout as e:
+                    if attempt == max_attempts:
+                        raise
+                    backoff = 2 ** attempt
+                    logger.warning(f"ElevenLabs STT timeout, retrying in {backoff}s (attempt {attempt}/{max_attempts})", extra={"service": "stt"})
+                    import time
+                    time.sleep(backoff)
             raw = {}
             try:
                 raw = resp.json()

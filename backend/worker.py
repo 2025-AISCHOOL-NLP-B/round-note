@@ -1,8 +1,16 @@
 import os
+import sys
 import redis
 from rq import Worker, Queue
 from pathlib import Path
 from sqlalchemy.orm import Session
+
+# Render에서 Root Directory가 backend로 설정된 경우 대응
+# 현재 디렉토리가 backend/이면 부모를 sys.path에 추가
+current_dir = Path(__file__).resolve().parent
+if current_dir.name == 'backend':
+    sys.path.insert(0, str(current_dir.parent))
+
 from backend.database import SessionLocal
 from backend import models
 from backend.core.stt.service import STTService
@@ -21,15 +29,25 @@ if not redis_url:
 # Render의 rediss:// (SSL) URL에 맞게 접속 설정을 합니다.
 conn = None
 try:
+    print("=" * 70)
+    print("🚀 Redis Worker 초기화 시작")
+    print(f"📡 Redis URL: {redis_url[:30]}...")
+    
     if redis_url.startswith("rediss://"):
+        print("🔒 SSL 연결 사용 (rediss://)")
         conn = redis.from_url(redis_url, ssl_cert_reqs='required')
     else:
+        print("🔓 일반 연결 사용 (redis://)")
         conn = redis.from_url(redis_url)
     
     conn.ping()
-    print("Redis에 성공적으로 연결되었습니다.")
+    print("✅ Redis에 성공적으로 연결되었습니다.")
+    print(f"📊 Redis 정보: {conn.info('server')['redis_version']}")
+    print("=" * 70)
 except Exception as e:
-    print(f"Redis 연결 실패: {e}")
+    print("=" * 70)
+    print(f"❌ Redis 연결 실패: {e}")
+    print("=" * 70)
     exit(1)
 
 # --- 작업(Task)을 worker.py에 정의합니다. ---
@@ -38,18 +56,32 @@ def retranscribe_meeting(meeting_id: str, audio_filename: str | None = None) -> 
     Batch STT using ElevenLabs for a meeting's .wav audio.
     Resolves audio path, calls STTService.transcribe_wav, and persists results.
     """
+    print("\n" + "=" * 70)
+    print(f"🎯 [WORKER] retranscribe_meeting 작업 시작")
+    print(f"📝 Meeting ID: {meeting_id}")
+    print(f"🎵 Audio filename: {audio_filename}")
+    print("=" * 70)
+    
     db: Session = SessionLocal()
     try:
         meeting = db.query(models.Meeting).filter(models.Meeting.MEETING_ID == meeting_id).first()
         if not meeting:
+            print(f"❌ [WORKER] Meeting not found: {meeting_id}")
             return {"success": False, "message": "Meeting not found", "meeting_id": meeting_id}
 
         # Mark status processing
+        print(f"⏳ [WORKER] 상태를 'processing'으로 변경")
         meeting.FINAL_TRANSCRIPT_STATUS = "processing"
         meeting.FINAL_TRANSCRIPT_ERROR = None
         db.commit()
 
-        # Resolve audio path
+        # Resolve audio path from shared disk or local directories
+        filename = audio_filename or (os.path.basename(meeting.LOCATION) if meeting.LOCATION else f"{meeting_id}.wav")
+        audio_path = None
+        
+        print(f"🔍 [WORKER] 오디오 파일 탐색: {filename}")
+        
+        # Render Disk 또는 로컬 경로에서 파일 찾기
         possible_dirs = []
         if os.path.exists('/app/audio_storage'):
             possible_dirs.append('/app/audio_storage')
@@ -61,16 +93,19 @@ def retranscribe_meeting(meeting_id: str, audio_filename: str | None = None) -> 
         possible_dirs.append(os.path.abspath('./audio_storage'))
         possible_dirs.append(os.path.abspath('../audio_storage'))
         possible_dirs.append(os.path.abspath('./backend/audio_storage'))
-
-        filename = audio_filename or (os.path.basename(meeting.LOCATION) if meeting.LOCATION else f"{meeting_id}.wav")
-        audio_path = None
+        
+        print(f"📂 [WORKER] 탐색 경로: {possible_dirs}")
+        
         for base in possible_dirs:
             candidate = os.path.join(base, filename)
+            print(f"   검사 중: {candidate}")
             if os.path.exists(candidate):
                 audio_path = candidate
+                print(f"✅ [WORKER] 파일 발견: {audio_path}")
                 break
 
         if not audio_path:
+            print(f"❌ [WORKER] 오디오 파일을 찾을 수 없음: {filename}")
             meeting.FINAL_TRANSCRIPT_STATUS = "error"
             meeting.FINAL_TRANSCRIPT_ERROR = f"Audio file not found: {filename}"
             db.commit()
@@ -151,7 +186,7 @@ def retranscribe_meeting(meeting_id: str, audio_filename: str | None = None) -> 
             
             # Commit all changes in one transaction
             db.commit()
-            print(f"[Worker] All tasks completed for {meeting_id}")
+            print(f"✅ [WORKER] All tasks completed for {meeting_id}")
             
             return {"success": True, "meeting_id": meeting_id, "length": len(text or "")}
         else:
@@ -402,14 +437,37 @@ def translate_meeting_content(meeting_id: str, content_type: str, source_lang: s
         db.close()
 
 
-if __name__ == '__main__':
+def main():
+    """RQ Worker 메인 함수"""
     # Listen on queues used for retranscription, translation and future tasks
     listen = ['high-priority-queue', 'stt', 'translation']
 
-    print(f"'{listen}' 큐를 감시합니다. 새 작업을 기다립니다...")
+    print("\n" + "=" * 70)
+    print(f"👂 '{listen}' 큐를 감시합니다.")
+    print("=" * 70)
 
     queues = [Queue(name, connection=conn) for name in listen]
+    
+    # 각 큐의 현재 작업 수 출력
+    print("\n📊 큐 상태:")
+    for queue in queues:
+        job_count = queue.count
+        print(f"  - Queue '{queue.name}': {job_count} jobs waiting")
+    
     worker = Worker(queues, connection=conn)
+    print(f"\n🤖 Worker ID: {worker.name}")
+    print("=" * 70)
+    print("⏳ 새 작업을 기다립니다...\n")
 
     # work()는 무한 루프입니다. 이 프로세스는 종료되지 않고 계속 실행됩니다.
-    worker.work()
+    try:
+        worker.work(with_scheduler=True)
+    except KeyboardInterrupt:
+        print("\n\n" + "=" * 70)
+        print("⏹️  Worker 종료 신호 수신")
+        print("=" * 70)
+        raise
+
+
+if __name__ == '__main__':
+    main()

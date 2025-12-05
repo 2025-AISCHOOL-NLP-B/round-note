@@ -21,49 +21,49 @@ services:
     ports:
       - "6379:6379"
 
-  # FastAPI 백엔드 서비스 정의
+  # FastAPI 백엔드 + RQ Worker 통합 서비스
   backend:
     container_name: roundnote_backend
-    # 위에서 작성한 backend/Dockerfile을 사용하여 이미지를 빌드합니다.
     build:
       context: .
       dockerfile: ./backend/Dockerfile
     env_file:
       - ./backend/.env
     environment:
-      # Python이 /app 디렉토리에서도 모듈을 찾도록 경로 추가
       - PYTHONPATH=/app
+      - ENVIRONMENT=development
     ports:
       - "8000:8000"
-    depends_on:
-      - db       # 백엔드를 실행하기 전에 db와 redis가 먼저 실행되도록 순서 정의
-      - redis
-    volumes:
-      - ./backend:/app/backend  # 코드 변경 시 자동 반영을 위해 소스 코드 마운트
-      - ./audio_storage:/app/audio_storage  # 오디오 파일 저장소 마운트
-    working_dir: /app/backend
-    command: /bin/sh -c "alembic upgrade head && uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload"
-
-  # RQ Worker 서비스 정의 (ElevenLabs 배치 전사 처리)
-  worker:
-    container_name: roundnote_worker
-    build:
-      context: .
-      dockerfile: ./backend/Dockerfile
-    env_file:
-      - ./backend/.env
-    environment:
-      - PYTHONPATH=/app
-      - REDIS_URL=redis://redis:6379/0
-      - DATABASE_URL=postgresql://roundnote_user:roundnote_password@db:5432/roundnote_db
     depends_on:
       - db
       - redis
     volumes:
       - ./backend:/app/backend
       - ./audio_storage:/app/audio_storage
-    working_dir: /app
-    command: python backend/worker.py
+    working_dir: /app/backend
+    # API와 Worker를 동시에 실행
+    command: /bin/sh -c "alembic upgrade head && (python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload &) && sleep 3 && python worker.py"
+
+  # RQ Worker 서비스 정의 (ElevenLabs 배치 전사 처리) - 현재는 backend 서비스에 통합되어 있음
+  # worker:
+  #   container_name: roundnote_worker
+  #   build:
+  #     context: .
+  #     dockerfile: ./backend/Dockerfile
+  #   env_file:
+  #     - ./backend/.env
+  #   environment:
+  #     - PYTHONPATH=/app
+  #     - REDIS_URL=redis://redis:6379/0
+  #     - DATABASE_URL=postgresql://roundnote_user:roundnote_password@db:5432/roundnote_db
+  #   depends_on:
+  #     - db
+  #     - redis
+  #   volumes:
+  #     - ./backend:/app/backend
+  #     - ./audio_storage:/app/audio_storage
+  #   working_dir: /app
+  #   command: python backend/worker.py
 
 # PostgreSQL 데이터 영속성 볼륨 정의
 volumes:
