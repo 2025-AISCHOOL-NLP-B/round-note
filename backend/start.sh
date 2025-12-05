@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# 작업 디렉토리를 backend로 이동
+cd /app/backend
+
 # 현재 디렉토리 출력 (디버깅용)
 echo "Current directory: $(pwd)"
 echo "Files in current directory:"
@@ -13,15 +16,14 @@ export PYTHONPATH=/app:$PYTHONPATH
 echo "=========================================="
 echo "🗄️  Running database migrations..."
 echo "=========================================="
-alembic upgrade head
+alembic -c alembic.ini upgrade head
 
 # API와 Worker를 동시에 실행
 echo ""
 echo "=========================================="
 echo "🚀 Starting API server..."
 echo "=========================================="
-python -m uvicorn main:app --host 0.0.0.0 --port 10000 \
-  --log-level info &
+python -m uvicorn main:app --host 0.0.0.0 --port 10000 --log-level info &
 API_PID=$!
 echo "✅ API started with PID: $API_PID"
 
@@ -40,7 +42,7 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
   RETRY_COUNT=$((RETRY_COUNT + 1))
   echo "   Attempt $RETRY_COUNT/$MAX_RETRIES..."
   sleep 1
-done
+
 
 if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
   echo "⚠️  API did not start within timeout, but continuing..."
