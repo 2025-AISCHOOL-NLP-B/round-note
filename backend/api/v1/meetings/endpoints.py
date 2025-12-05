@@ -376,6 +376,32 @@ def delete_meeting(
             detail="본인이 생성한 회의만 삭제할 수 있습니다."
         )
     
+    # 오디오 파일 삭제
+    audio_path = db_meeting.LOCATION or db_meeting.AUDIO_URL
+    if audio_path:
+        try:
+            # 상대경로/절대경로 처리
+            if not os.path.isabs(audio_path):
+                # 상대경로인 경우 여러 위치 시도
+                possible_paths = [
+                    audio_path,
+                    os.path.join('./audio_storage', os.path.basename(audio_path)),
+                    os.path.join('/app/audio_storage', os.path.basename(audio_path)),
+                ]
+                for path in possible_paths:
+                    if os.path.exists(path):
+                        os.remove(path)
+                        print(f"🗑️ [DELETE] Removed audio file: {path}")
+                        break
+            else:
+                # 절대경로인 경우 직접 삭제
+                if os.path.exists(audio_path):
+                    os.remove(audio_path)
+                    print(f"🗑️ [DELETE] Removed audio file: {audio_path}")
+        except Exception as e:
+            # 파일 삭제 실패해도 회의는 삭제 진행
+            print(f"⚠️ [DELETE] Failed to remove audio file: {audio_path}, error: {e}")
+    
     # 회의 삭제
     meeting_crud.delete_meeting(db=db, meeting=db_meeting)
     
