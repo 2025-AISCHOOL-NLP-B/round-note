@@ -33,7 +33,7 @@ import {
 } from "lucide-react";
 import { Toaster } from "../../shared/ui/sonner";
 import Image from "next/image";
-import logoImage from "../../../public/1479b69d0df16b28749512726e3ffc0f8c722c85.png";
+import logoImage from "../../../public/roundnote_main_logo.svg";
 import logoSmall from "../../../public/60426c137b413d34e2b76e4bc10e67509bb612fb.png";
 
 export interface ActionItem {

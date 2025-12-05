@@ -31,10 +31,10 @@ class STTService:
             "&language=ko"     # Support Korean
             "&encoding=linear16" # Audio encoding format
             "&sample_rate=16000" # Audio sample rate (matches microphone)
-            "&smart_format=true" # Smart formatting (dates, times, etc.)
             "&multichannel=true" # Enable multichannel
-            "&punctuate=true"  # Add punctuation
-
+            "&smart_format=true" # Disable smart_format for Korean spacing (nova-3 bug workaround)
+            # "&punctuate=true"  # Add punctuation
+            # "&filler_words=true" # Include filler words for natural transcription
 
             # "&numerals=true"  # Convert numbers <- only (English and Western Languages)
             # "&endpointer=true" # Voice activity detection

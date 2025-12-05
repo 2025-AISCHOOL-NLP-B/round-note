@@ -762,29 +762,56 @@ export function MeetingContentInput({ meetingInfo, meetingMode, onComplete, onBa
                   <div className="space-y-6">
                     {transcript.map((segment) => {
                       const isMic = segment.channelType === 'Mic';
-                      const bgColor = isMic ? 'bg-blue-50' : 'bg-green-50';
-                      const borderColor = isMic ? 'border-blue-200' : 'border-green-200';
+
+                      // 8-color palette per channel to avoid monotone balloons
+                      const micPalette = [
+                        { bg: 'bg-red-50', border: 'border-red-200', iconBg: 'bg-red-100', icon: 'text-red-800', badge: 'bg-red-100 text-red-900', accent: '#dc2626' },
+                        { bg: 'bg-fuchsia-50', border: 'border-fuchsia-200', iconBg: 'bg-fuchsia-100', icon: 'text-fuchsia-800', badge: 'bg-fuchsia-100 text-fuchsia-900', accent: '#c026d3' },
+                        { bg: 'bg-amber-50', border: 'border-amber-200', iconBg: 'bg-amber-100', icon: 'text-amber-800', badge: 'bg-amber-100 text-amber-900', accent: '#f59e0b' },
+                        { bg: 'bg-violet-50', border: 'border-violet-200', iconBg: 'bg-violet-100', icon: 'text-violet-800', badge: 'bg-violet-100 text-violet-900', accent: '#6d28d9' },
+                        { bg: 'bg-orange-50', border: 'border-orange-200', iconBg: 'bg-orange-100', icon: 'text-orange-800', badge: 'bg-orange-100 text-orange-900', accent: '#ea580c' },
+                        { bg: 'bg-pink-50', border: 'border-pink-200', iconBg: 'bg-pink-100', icon: 'text-pink-800', badge: 'bg-pink-100 text-pink-900', accent: '#db2777' },
+                        { bg: 'bg-rose-50', border: 'border-rose-200', iconBg: 'bg-rose-100', icon: 'text-rose-800', badge: 'bg-rose-100 text-rose-900', accent: '#e11d48' },
+                        { bg: 'bg-purple-50', border: 'border-purple-200', iconBg: 'bg-purple-100', icon: 'text-purple-800', badge: 'bg-purple-100 text-purple-900', accent: '#7c3aed' },
+                      ];
+
+                      const systemPalette = [
+                        { bg: 'bg-blue-50', border: 'border-blue-200', iconBg: 'bg-blue-100', icon: 'text-blue-800', badge: 'bg-blue-100 text-blue-900', accent: '#1d4ed8' },
+                        { bg: 'bg-teal-50', border: 'border-teal-200', iconBg: 'bg-teal-100', icon: 'text-teal-800', badge: 'bg-teal-100 text-teal-900', accent: '#0f766e' },
+                        { bg: 'bg-sky-50', border: 'border-sky-200', iconBg: 'bg-sky-100', icon: 'text-sky-800', badge: 'bg-sky-100 text-sky-900', accent: '#0284c7' },
+                        { bg: 'bg-emerald-50', border: 'border-emerald-200', iconBg: 'bg-emerald-100', icon: 'text-emerald-800', badge: 'bg-emerald-100 text-emerald-900', accent: '#059669' },
+                        { bg: 'bg-indigo-50', border: 'border-indigo-200', iconBg: 'bg-indigo-100', icon: 'text-indigo-800', badge: 'bg-indigo-100 text-indigo-900', accent: '#4338ca' },
+                        { bg: 'bg-lime-50', border: 'border-lime-200', iconBg: 'bg-lime-100', icon: 'text-lime-800', badge: 'bg-lime-100 text-lime-900', accent: '#4d7c0f' },
+                        { bg: 'bg-cyan-50', border: 'border-cyan-200', iconBg: 'bg-cyan-100', icon: 'text-cyan-800', badge: 'bg-cyan-100 text-cyan-900', accent: '#0891b2' },
+                        { bg: 'bg-slate-50', border: 'border-slate-200', iconBg: 'bg-slate-100', icon: 'text-slate-800', badge: 'bg-slate-100 text-slate-900', accent: '#475569' },
+                      ];
+
+                      const palette = isMic ? micPalette : systemPalette;
+                      const speakerMatch = segment.speaker.match(/\d+/);
+                      const speakerIndex = speakerMatch ? parseInt(speakerMatch[0], 10) : 0;
+                      const color = palette[speakerIndex % palette.length];
+
                       const IconComponent = isMic ? Mic : Monitor;
-                      const iconBg = isMic ? 'bg-blue-100' : 'bg-green-100';
-                      const iconColor = isMic ? 'text-blue-600' : 'text-green-600';
                       const badge = isMic ? '마이크' : '시스템';
 
                       return (
                         <div key={segment.id} className="flex gap-3">
                           <div className="flex flex-col items-center gap-1 min-w-[60px]">
-                            <div className={`w-8 h-8 rounded-full ${iconBg} flex items-center justify-center ${iconColor}`}>
+                            <div className={`w-8 h-8 rounded-full ${color.iconBg} flex items-center justify-center ${color.icon}`}>
                               <IconComponent className="w-4 h-4" />
                             </div>
                           </div>
                           <div className="flex-1 space-y-1">
                             <div className="flex items-center gap-2">
                               <span className="text-sm font-semibold text-slate-700">{segment.speaker}</span>
-                              <span className={`text-xs px-1.5 py-0.5 rounded ${isMic ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
+                              <span className={`text-xs px-1.5 py-0.5 rounded ${color.badge}`}>
                                 {badge}
                               </span>
                               <span className="text-xs text-slate-400">{segment.timestamp}</span>
                             </div>
-                            <div className={`p-3 ${bgColor} rounded-lg rounded-tl-none border ${borderColor} shadow-sm text-slate-700 leading-relaxed`}>
+                            <div
+                              className={`p-3 ${color.bg} rounded-lg rounded-tl-none shadow-sm text-slate-800 leading-relaxed`}
+                            >
                               {segment.text}
                             </div>
                           </div>
