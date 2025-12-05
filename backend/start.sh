@@ -43,6 +43,7 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
   RETRY_COUNT=$((RETRY_COUNT + 1))
   echo "   Attempt $RETRY_COUNT/$MAX_RETRIES..."
   sleep 1
+done
 
 
 if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
