@@ -1,6 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
 import { Button } from '@/shared/ui/button';
-import { Download, FileBarChart, Calendar, Users, Target, CheckCircle2, Clock, TrendingUp, ExternalLink, ListChecks } from 'lucide-react';
+import { Download, FileBarChart, Calendar, Users, Target, CheckCircle2, Clock, TrendingUp, ExternalLink, ListChecks, Mic } from 'lucide-react';
+import { TranscriptDisplay } from '@/components/TranscriptStatusBanner';
 import type { Meeting } from '@/features/dashboard/Dashboard';
 import { toast } from 'sonner';
 
@@ -253,12 +254,13 @@ ${meeting.content}
       {/* Full Meeting Content (회의 원문) */}
       <Card>
         <CardHeader>
-          <CardTitle>회의 원문</CardTitle>
+          <CardTitle className="flex items-center gap-2 text-foreground">
+            <Mic className="w-5 h-5 text-blue-600" />
+            회의 원문
+          </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="bg-gray-50 rounded-lg p-4 max-h-[500px] overflow-y-auto">
-            <p className="whitespace-pre-wrap text-gray-700">{meeting.content}</p>
-          </div>
+          <TranscriptDisplay transcript={meeting.content} isLoading={false} />
         </CardContent>
       </Card>
     </div>
