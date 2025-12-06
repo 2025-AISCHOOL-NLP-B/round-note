@@ -546,7 +546,7 @@ export function MeetingContentInput({ meetingInfo, meetingMode, onComplete, onBa
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50/50 via-slate-50 to-indigo-50/50 pb-8 px-2 md:px-4 pt-4">
+    <div className="min-h-screen pb-8 px-2 md:px-4 pt-4">
       {/* 로딩 오버레이 */}
       <ProcessingOverlay
         open={isProcessing}
@@ -562,7 +562,7 @@ export function MeetingContentInput({ meetingInfo, meetingMode, onComplete, onBa
             <Input
               value={editableTitle}
               onChange={(e) => setEditableTitle(e.target.value)}
-              className="text-xl md:text-2xl border-none p-0 w-1000px h-auto focus-visible:ring-0 focus-visible:ring-offset-0 font-semibold text-slate-800 placeholder:text-slate-400 flex-1"
+              className="text-xl md:text-2xl border-none p-0 h-auto focus-visible:ring-0 focus-visible:ring-offset-0 font-semibold text-slate-800 placeholder:text-slate-400 flex-1"
               placeholder={generateDefaultTitle(meetings)}   // ← 임시 제목 자동 반영
             />
           </div>
@@ -756,7 +756,7 @@ export function MeetingContentInput({ meetingInfo, meetingMode, onComplete, onBa
               {/* 전사 내용 표시 영역 - 타임라인 스타일 */}
               <div
                 ref={transcriptRef}
-                className="h-[500px] w-[1000px] overflow-y-auto border border-slate-200 rounded-lg p-4 bg-slate-50"
+                className="h-[500px] w-full overflow-y-auto border border-slate-200 rounded-lg p-4 bg-slate-50"
               >
                 {transcript.length > 0 || partialText ? (
                   <div className="space-y-6">
@@ -964,7 +964,7 @@ export function MeetingContentInput({ meetingInfo, meetingMode, onComplete, onBa
               {/* 요약 내용 표시 영역 - 고정 높이 + 스크롤 */}
               <div
                 ref={summaryRef}
-                className="h-[500px] w-[1000px] overflow-y-auto border border-slate-200 rounded-lg p-4 bg-slate-50"
+                className="h-[500px] w-full overflow-y-auto border border-slate-200 rounded-lg p-4 bg-slate-50"
               >
                 {timelineSummaries.length > 0 ? (
                   <div className="space-y-3">

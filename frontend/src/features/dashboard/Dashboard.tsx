@@ -508,11 +508,11 @@ export function Dashboard() {
   );
 
   return (
-    <div className="min-h-screen bg-background flex w-screen">
+    <div className="min-h-screen bg-background w-screen overflow-x-hidden">
       {/* Sidebar */}
       <aside
         className={`
-            bg-white border-r border-border sticky top-0 h-screen transition-all duration-300 flex-shrink-0 hidden md:flex flex-col
+            bg-white border-r border-border fixed left-0 top-0 h-screen transition-all duration-300 flex-shrink-0 hidden md:flex flex-col z-40
             ${sidebarOpen ? "w-64" : "w-20"}
           `}
       >
@@ -594,7 +594,7 @@ export function Dashboard() {
       </aside>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className={`flex-1 flex flex-col min-w-0 transition-all duration-300 ${sidebarOpen ? "md:ml-64" : "md:ml-20"}`}>
         {/* Mobile Header */}
         <header className="bg-white border-b border-border p-4 md:hidden sticky top-0 z-50">
           <div className="flex items-center justify-between">
@@ -644,7 +644,7 @@ export function Dashboard() {
 
         {/* Main Content */}
         <main className="flex-1 p-4 md:p-8 overflow-y-auto w-full" style={{ scrollbarGutter: 'stable' }}>
-          <div className="max-w-7xl mx-auto w-full">
+          <div className="max-w-[1400px] mx-auto w-full">
             {/* ✅ Hybrid 렌더링 방식 적용 */}
 
             {/* 1. Home 섹션: 항상 렌더링하되 hidden으로 제어 */}
