@@ -1,7 +1,12 @@
 # 1. 베이스 이미지 선택
 FROM python:3.11-slim
 
-# 2. 작업 디렉터리 설정
+# 2. Python 환경 변수 설정
+# PYTHONDONTWRITEBYTECODE: .pyc 파일 생성 방지
+# PYTHONUNBUFFERED: stdout/stderr 버퍼링 비활성화 (로그 실시간 표시)
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+
+# 3. 작업 디렉터리 설정
 # 컨테이너 내부의 /app 디렉터리에서 이후 명령을 실행합니다.
 WORKDIR /app
 

@@ -26,21 +26,23 @@ class STTService:
 
         self.DEEPGRAM_BASE_URL = "wss://api.deepgram.com/v1/listen"
         self.DEEPGRAM_PARAMS = (
-            # "?punctuate=true"  # Add punctuation
-            "?language=ko"     # Support Korean
-            "&model=nova-2"    # Latest high-performance model
+            "?model=nova-3"    # Latest high-performance model (supports Keyterm Prompting)
             "&diarize=true"    # Speaker diarization
+            "&language=ko"     # Support Korean
             "&encoding=linear16" # Audio encoding format
             "&sample_rate=16000" # Audio sample rate (matches microphone)
-            "&smart_format=true" # Smart formatting (dates, times, etc.)
             "&multichannel=true" # Enable multichannel
-            # "&channels=2"      # Dynamic configuration via method argument
+            "&smart_format=true" # Disable smart_format for Korean spacing (nova-3 bug workaround)
+            # "&punctuate=true"  # Add punctuation
+            # "&filler_words=true" # Include filler words for natural transcription
+
+            # "&numerals=true"  # Convert numbers <- only (English and Western Languages)
             # "&endpointer=true" # Voice activity detection
         )
         
         logger.info("STTService initialized successfully", extra={
             "service": "stt",
-            "model": "nova-2",
+            "model": "nova-3",
             "language": "ko",
             "diarization_enabled": True
         })
@@ -73,14 +75,15 @@ class STTService:
         params = self.DEEPGRAM_PARAMS.replace("&sample_rate=16000", "") + f"&channels={channels}&sample_rate={sample_rate}"
         
 
-        # 키워드 부스팅 추가 (참여자 이름 등)
+        # Keyterm Prompting 추가 (참여자 이름 등)
+        # Nova-3에서는 Keywords 대신 Keyterm Prompting 사용
         if keywords and len(keywords) > 0:
-            # Deepgram 키워드 형식: keywords=키워드1:boost,키워드2:boost
-            # boost 값은 -10 ~ 10, 기본적으로 2 사용 (적당히 강조)
-            keyword_params = ",".join([f"{kw}:2" for kw in keywords if kw.strip()])
-            if keyword_params:
-                params += f"&keywords={keyword_params}"
-                logger.info(f"Keywords boosting enabled: {keyword_params}", extra={"service": "stt"})
+            # Deepgram Keyterm Prompting 형식: 각 keyterm을 별도의 &keyterm= 파라미터로 전달
+            # 예: &keyterm=John&keyterm=Alice
+            # 참고: Keyterm Prompting은 Nova-3와 Flux에서만 지원
+            for keyword in keywords:
+                params += f"&keyterm={keyword}"
+            logger.info(f"Keyterm Prompting enabled: {keywords} (총 {len(keywords)}개 키워드)", extra={"service": "stt"})
                 
         full_url = self.DEEPGRAM_BASE_URL + params
         headers = {"Authorization": f"Token {self.DEEPGRAM_API_KEY}"}
@@ -134,7 +137,7 @@ class STTService:
 
     # Batch STT using ElevenLabs
     @api_retry_stt
-    def transcribe_wav(self, file_path: str, language: str = "ko", meeting_start_time=None) -> Tuple[Optional[str], Dict[str, Any]]:
+    def transcribe_wav(self, file_path: str, language: str = "ko", meeting_start_time=None, num_speakers: int = None) -> Tuple[Optional[str], Dict[str, Any]]:
         """
         Transcribe a local .wav file using ElevenLabs batch STT.
 
@@ -142,6 +145,7 @@ class STTService:
             file_path: Absolute or workspace-relative path to a .wav file (audio_storage/*.wav expected).
             language: BCP-47 or provider-supported code. Default 'ko'.
             meeting_start_time: Optional datetime of meeting start. If provided, timestamps show actual time.
+            num_speakers: Optional hint for number of speakers. Helps improve diarization accuracy.
 
         Returns:
             (transcript_text, raw_response_dict)
@@ -197,9 +201,11 @@ class STTService:
             "timestamps_granularity": "word",  # Get word-level timestamps with speaker_id
             "tag_audio_events": "false",
             # "diarization_threshold": "0.1",
-            "num_speakers": None,  # Hint for max speakers (optional, helps accuracy)
-            # TODO: num_speakers can be set dynamically based on meeting participant count
         }
+        # Only include num_speakers if provided (helps improve diarization accuracy)
+        if num_speakers is not None:
+            data["num_speakers"] = num_speakers
+            logger.info(f"ElevenLabs num_speakers hint: {num_speakers}", extra={"service": "stt"})
 
         try:
             max_attempts = 3

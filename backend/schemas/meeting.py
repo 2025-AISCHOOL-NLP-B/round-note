@@ -119,3 +119,7 @@ class MeetingEndRequest(BaseModel):
         None,
         description="오디오 파일 경로 (NCP Object Storage 등)"
     )
+    participants: Optional[List[str]] = Field(
+        None,
+        description="회의 참석자 목록 (기본값으로 설정될 참여자 정보)"
+    )

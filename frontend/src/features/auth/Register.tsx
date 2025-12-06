@@ -110,7 +110,7 @@ export function Register({ onRegister, onBackToLogin }: RegisterProps) {
         <CardHeader className="space-y-4 pb-6">
           <div className="flex justify-center">
             <Image
-              src="/1479b69d0df16b28749512726e3ffc0f8c722c85.png"
+              src="/round_note_main_logo.svg"
               alt="RoundNote Logo"
               width={80}
               height={80}
