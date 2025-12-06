@@ -122,7 +122,7 @@ export function MeetingListView({ meetings, onUpdateMeeting, onDeleteMeeting, on
   return (
     <div className={`space-y-5`}>
       {/* Search and Filter Section */}
-      <div className="mx-auto w-[1000px] relative">
+      <div className="w-full relative">
         <Card className="bg-primary/5 border-primary/20">
           <CardContent className="pt-6">
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 items-center">
@@ -250,7 +250,7 @@ export function MeetingListView({ meetings, onUpdateMeeting, onDeleteMeeting, on
       {/* Meetings Grid */}
       {filteredAndSortedMeetings.length === 0 ? (
         <div className="w-full">
-          <div className="mx-auto w-[1000px] h-[500px] flex items-center justify-center">
+          <div className="w-full h-[500px] flex items-center justify-center">
             <Card className="w-full h-full">
               <CardContent className="flex flex-col items-center justify-center h-full">
                 <Circle className="w-24 h-24 text-gray-300 mb-4" />
