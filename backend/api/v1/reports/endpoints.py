@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -1147,16 +1148,7 @@ async def push_comprehensive_report_to_notion(
         for item in action_items_db
     ]
     
-    # 4. 참석자 정보 (⭐ 필수)
-    participants = [
-        Participant(
-            user_id=meeting.CREATOR_ID or "unknown",
-            name=current_user.NAME or current_user.EMAIL or "주최자",
-            role="host"
-        )
-    ]
-    
-    # 5. 사용자 Notion 설정 조회
+    # 4. 사용자 Notion 설정 조회
     user_id = current_user.USER_ID
     notion_setting = db.query(models.UserIntegrationSetting).filter(
         models.UserIntegrationSetting.USER_ID == user_id,
@@ -1168,6 +1160,8 @@ async def push_comprehensive_report_to_notion(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Notion not configured. Please set up Notion integration in settings."
         )
+        
+    participants = meeting.PARTICIPANTS or []
     
     # Notion 설정 복호화
     config = notion_setting.CONFIG
@@ -1180,7 +1174,7 @@ async def push_comprehensive_report_to_notion(
         database_id=None
     )
     
-    # 6. Notion 페이지 생성
+    # 5. Notion 페이지 생성
     try:
         result = notion.create_comprehensive_meeting_page(
             meeting_title=meeting.TITLE or f"회의 {meeting_id}",
@@ -1190,7 +1184,7 @@ async def push_comprehensive_report_to_notion(
             meeting_type="정기",
             participants=participants,
             absent_members=[],
-            purpose="",
+            purpose=meeting.PURPOSE or "목적 없음",
             summary=summary_text,
             discussions=[],
             decisions=[],

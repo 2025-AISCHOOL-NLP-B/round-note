@@ -280,6 +280,63 @@ export function MeetingDetail({
     return formatted;
   };
 
+  // Markdown 형식의 요약 텍스트를 React 엘리먼트 배열로 변환
+  const renderMarkdownSummary = (markdownText: string | undefined): React.ReactNode[] => {
+    if (!markdownText) return [<p key="empty">요약 정보 없음</p>];
+
+    const lines = markdownText.split('\n');
+    const nodes: React.ReactNode[] = [];
+    let listItems: string[] = [];
+    let listKey = 0;
+
+    const finalizeList = () => {
+      if (listItems.length > 0) {
+        nodes.push(
+          <ul key={`ul-${listKey++}`} className="list-disc ml-6 space-y-1">
+            {listItems.map((item, index) => (
+              <li key={index} className="text-gray-700">{item}</li>
+            ))}
+          </ul>
+        );
+        listItems = [];
+      }
+    };
+
+    lines.forEach((line, index) => {
+      const trimmedLine = line.trim();
+      if (!trimmedLine) {
+        // 빈 줄은 리스트를 종결하고 무시
+        finalizeList();
+        return;
+      }
+
+      if (trimmedLine.startsWith('## ')) {
+        finalizeList();
+        const content = trimmedLine.substring(3).trim();
+        // Notion 블록과 유사하게 Heading 2 대신 Heading 3으로 변환
+        nodes.push(
+          <h3 key={`h3-${index}`} className="text-lg font-semibold mt-4 mb-2 text-gray-800 border-b border-gray-100 pb-1">
+            {content}
+          </h3>
+        );
+      } else if (trimmedLine.startsWith('- ')) {
+        // 리스트 항목을 모았다가 다음 블록 타입이 나오면 렌더링
+        listItems.push(trimmedLine.substring(2).trim());
+      } else {
+        finalizeList();
+        // 일반 텍스트는 <p> 태그로 렌더링
+        nodes.push(
+          <p key={`p-${index}`} className="whitespace-pre-wrap text-gray-700 mt-2 mb-2">
+            {trimmedLine}
+          </p>
+        );
+      }
+    });
+
+    finalizeList(); // 마지막에 리스트가 남아있으면 렌더링
+    return nodes;
+  };
+
   // ElevenLabs 재전사 상태 및 폴링 훅
   const { 
     artifacts, 
@@ -1065,9 +1122,9 @@ export function MeetingDetail({
                       <div className="text-center py-4 text-gray-500">번역 중...</div>
                     ) : (
                       <div className="prose max-w-none">
-                        <p className="whitespace-pre-wrap text-gray-700">
-                          {summaryLang === 'ko' ? meeting.summary : translatedSummary || meeting.summary}
-                        </p>
+                        {renderMarkdownSummary(
+                          summaryLang === 'ko' ? meeting.summary : translatedSummary || meeting.summary
+                        )}
                       </div>
                     )}
                   </CardContent>
