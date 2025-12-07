@@ -65,6 +65,7 @@ export interface Meeting {
   nextSteps?: string[];
   audioUrl?: string;
   purpose?: string;
+  speaker_mapping?: Record<string, string>;
 }
 
 type MeetingMode = 'video-conference' | 'offline' | 'file-upload';
@@ -119,7 +120,8 @@ export function Dashboard() {
           participants: m.participants || [],
           keyDecisions: m.key_decisions || [],
           nextSteps: m.next_steps || [],
-          audioUrl: m.audio_url || ''
+          audioUrl: m.audio_url || '',
+          speaker_mapping: m.speaker_mapping || {}
         }));
         setMeetings(mappedMeetings);
       }

@@ -317,7 +317,11 @@ ${meeting.content}
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <TranscriptDisplay transcript={meeting.content} isLoading={false} />
+          <TranscriptDisplay 
+            transcript={meeting.content} 
+            isLoading={false} 
+            speakerMapping={meeting.speaker_mapping}
+          />
         </CardContent>
       </Card>
     </div>

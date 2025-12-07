@@ -107,6 +107,8 @@ class Meeting(Base):
     AI_SUMMARY = Column(TEXT, nullable=True)
     # 참석자 정보 (JSON 배열)
     PARTICIPANTS = Column(JSONB, nullable=True)
+    # Speaker label -> real name mapping (UI-driven, optional)
+    SPEAKER_MAPPING = Column(JSONB, nullable=True, default=dict)
     # 주요 결정사항 (JSON 배열)
     KEY_DECISIONS = Column(JSONB, nullable=True)
     # 다음 단계 (JSON 배열)

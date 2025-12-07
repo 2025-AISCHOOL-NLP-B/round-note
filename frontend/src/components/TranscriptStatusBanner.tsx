@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 interface TranscriptStatusBannerProps {
   status: 'queued' | 'processing' | 'done' | 'error' | null;
@@ -84,6 +84,8 @@ export function TranscriptStatusBanner({
 interface TranscriptDisplayProps {
   transcript: string | null;
   isLoading?: boolean;
+  speakerMapping?: Record<string, string>;
+  onUpdateSpeaker?: (original: string, newName: string) => void;
 }
 
 /**
@@ -191,7 +193,30 @@ function parseTranscriptSegments(transcript: string) {
 /**
  * 최종 전사본을 표시하는 컴포넌트 (실시간 전사 UI 스타일 매칭)
  */
-export function TranscriptDisplay({ transcript, isLoading }: TranscriptDisplayProps) {
+export function TranscriptDisplay({ transcript, isLoading, speakerMapping, onUpdateSpeaker }: TranscriptDisplayProps) {
+  const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
+  const [tempName, setTempName] = useState('');
+
+  const startEdit = (label: string, currentName?: string) => {
+    setEditingSpeaker(label);
+    setTempName(currentName || label);
+  };
+
+  const submitEdit = () => {
+    if (!editingSpeaker) return;
+    const trimmed = tempName.trim();
+    if (trimmed && onUpdateSpeaker) {
+      onUpdateSpeaker(editingSpeaker, trimmed);
+    }
+    setEditingSpeaker(null);
+    setTempName('');
+  };
+
+  const cancelEdit = () => {
+    setEditingSpeaker(null);
+    setTempName('');
+  };
+
   if (isLoading) {
     return (
       <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 animate-pulse">
@@ -215,10 +240,14 @@ export function TranscriptDisplay({ transcript, isLoading }: TranscriptDisplayPr
   return (
     <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-6 max-h-[600px] overflow-y-auto">
       {segments.map((segment) => {
+        const mappedName = speakerMapping?.[segment.speaker];
+        const displayName = mappedName || segment.speaker;
+
         // Color-code by speaker for visual distinction
         // 다양한 언어에서 스피커 번호 추출: "Speaker 1", "スピーカー2", "说话者0" 등
-        const speakerMatch = segment.speaker.match(/\d+/);
-        const speakerIndex = speakerMatch ? parseInt(speakerMatch[0], 10) : 0;
+        // 색상 키는 숫자 기반 라벨뿐 아니라 임의 이름도 안정적으로 분리되도록 해시
+        const hash = Array.from(segment.speaker).reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+        const speakerIndex = hash % 256;
         const colors = [
           { bg: 'bg-blue-50', border: 'border-blue-200', badge: 'bg-blue-100 text-blue-700' },
           { bg: 'bg-green-50', border: 'border-green-200', badge: 'bg-green-100 text-green-700' },
@@ -243,12 +272,51 @@ export function TranscriptDisplay({ transcript, isLoading }: TranscriptDisplayPr
           <div key={segment.id} className="flex gap-3">
             <div className="flex flex-col items-center gap-1 min-w-[60px]">
               <div className={`w-8 h-8 rounded-full ${color.badge} flex items-center justify-center font-semibold text-xs`}>
-                {segment.speaker.charAt(0)}
+                {displayName.charAt(0)}
               </div>
             </div>
             <div className="flex-1 space-y-1">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-slate-700">{segment.speaker}</span>
+              <div className="flex items-center gap-2 flex-wrap">
+                {editingSpeaker === segment.speaker ? (
+                  <div className="flex items-center gap-2">
+                    <input
+                      autoFocus
+                      className="border border-slate-200 rounded px-2 py-1 text-sm"
+                      value={tempName}
+                      onChange={(e) => setTempName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') submitEdit();
+                        if (e.key === 'Escape') cancelEdit();
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="px-2 py-1 text-xs rounded bg-blue-600 text-white"
+                      onClick={submitEdit}
+                    >
+                      저장
+                    </button>
+                    <button
+                      type="button"
+                      className="px-2 py-1 text-xs rounded bg-slate-100 text-slate-700"
+                      onClick={cancelEdit}
+                    >
+                      취소
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="text-sm font-semibold text-slate-700 underline decoration-dashed decoration-slate-300 underline-offset-4 hover:text-blue-700"
+                    onClick={() => startEdit(segment.speaker, mappedName || segment.speaker)}
+                    disabled={!onUpdateSpeaker}
+                  >
+                    {displayName}
+                  </button>
+                )}
+                {mappedName && (
+                  <span className="text-xs text-slate-400">({segment.speaker})</span>
+                )}
                 <span className="text-xs text-slate-400">{segment.timestamp}</span>
               </div>
               <div className={`p-3 ${color.bg} rounded-lg rounded-tl-none border ${color.border} shadow-sm text-slate-700 leading-relaxed`}>
