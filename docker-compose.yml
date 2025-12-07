@@ -9,6 +9,7 @@ services:
       POSTGRES_USER: roundnote_user
       POSTGRES_PASSWORD: roundnote_password
       POSTGRES_DB: roundnote_db
+      TZ: Asia/Seoul
     ports:
       - "5432:5432"
     volumes:
