@@ -66,7 +66,7 @@ export function Login({ onLogin, onShowRegister }: LoginProps) {
         <CardHeader className="text-center space-y-4">
           <div className="flex justify-center mb-4">
             <Image
-              src="/1479b69d0df16b28749512726e3ffc0f8c722c85.png"
+              src="/round_note_main_logo.svg"
               alt="RoundNote Logo"
               width={80}
               height={80}

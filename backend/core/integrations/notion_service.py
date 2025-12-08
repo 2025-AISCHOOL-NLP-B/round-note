@@ -284,7 +284,7 @@ class NotionService:
         meeting_end_date: Optional[datetime],
         location: str,
         meeting_type: str,
-        participants: List[Participant],  # 필수
+        participants: List[str],  # 필수
         absent_members: List[str],
         purpose: str,
         summary: str,  # 필수
@@ -324,8 +324,8 @@ class NotionService:
             duration_str = "미정"
         
         # 참석자 문자열
-        host = next((p.name for p in participants if p.role == 'host'), '')
-        attendees = ', '.join([p.name for p in participants]) if participants else "정보 없음"
+        # host = next((p.name for p in participants if p.role == 'host'), '')
+        attendees = ', '.join([p for p in participants]) if participants else "정보 없음"
         
         # 페이지 블록 구성
         children = []
@@ -340,6 +340,8 @@ class NotionService:
             ("소요 시간", duration_str),
             ("장소", location),
             ("회의 유형", meeting_type),
+            ("참석자", attendees),
+            ("회의 목적", purpose if purpose else "정보 없음")
         ]
         
         for key, value in info_items:
@@ -347,29 +349,50 @@ class NotionService:
         
         children.append({"type": "divider", "divider": {}})
         
-        # ========== ⭐ 필수 1: 참석자 ==========
-        children.append(self._heading2("👥 참석자", "blue"))
+        # # ========== ⭐ 필수 1: 참석자 ==========
+        # children.append(self._heading2("👥 참석자", "blue"))
         
-        if host:
-            children.append(self._bullet_with_bold_label("주최", host))
+        # # if host:
+        # #     children.append(self._bullet_with_bold_label("주최", host))
         
-        children.append(self._bullet_with_bold_label("참석", attendees))
+        # children.append(self._bullet_with_bold_label("참석", attendees))
         
-        if absent_members:
-            children.append(self._bullet_with_bold_label("불참", ", ".join(absent_members)))
+        # if absent_members:
+        #     children.append(self._bullet_with_bold_label("불참", ", ".join(absent_members)))
         
-        children.append({"type": "divider", "divider": {}})
+        # children.append({"type": "divider", "divider": {}})
         
-        # ========== ⭐ 필수 2: 요약 ==========
+        # # ========== 2. 회의 목적 (있으면) ==========
+        # if purpose:
+        #     children.append(self._heading2("🎯 회의 목적", "purple"))
+        #     children.append(self._paragraph(purpose))
+        #     children.append({"type": "divider", "divider": {}})
+            
+        # ========== ⭐ 필수 3: 요약 ==========
         children.append(self._heading2("📝 요약", "green"))
-        children.append(self._paragraph(summary if summary else "요약 없음"))
+        if summary:
+            # 요약 내용을 줄바꿈 단위로 분할하여 Notion 블록으로 변환
+            lines = summary.split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                if line.startswith('## '):
+                    # Markdown Heading 2 -> Notion Heading 3 (Heading 2는 이미 섹션 제목)
+                    children.append(self._heading3(line[3:].strip()))
+                elif line.startswith('- '):
+                    # Markdown List Item -> Notion Bulleted List Item
+                    children.append(self._bullet(line[2:].strip()))
+                else:
+                    # 일반 텍스트 -> Notion Paragraph
+                    children.append(self._paragraph(line))
+        else:
+            children.append(self._paragraph("요약 없음"))
+            
         children.append({"type": "divider", "divider": {}})
         
-        # ========== 3. 회의 목적 (있으면) ==========
-        if purpose:
-            children.append(self._heading2("🎯 회의 목적", "purple"))
-            children.append(self._paragraph(purpose))
-            children.append({"type": "divider", "divider": {}})
         
         # ========== 4. 주요 논의사항 (있으면) ==========
         if discussions:

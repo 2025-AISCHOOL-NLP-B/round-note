@@ -2,6 +2,26 @@ from sqlalchemy.orm import Session
 from backend import models
 from backend.schemas import meeting as meeting_schema
 from typing import List, Optional
+import re
+
+
+def _apply_speaker_mapping_to_text(text: Optional[str], mapping: Optional[dict]) -> Optional[str]:
+    """Replace speaker labels in transcript-like text using provided mapping.
+
+    Expected format: lines beginning with "[timestamp] Speaker N". Only the label
+    immediately following the timestamp is replaced to avoid unintended changes
+    in the utterance body.
+    """
+    if not text or not mapping:
+        return text
+
+    updated = text
+    for label, new_name in mapping.items():
+        if not label or not new_name:
+            continue
+        pattern = rf"(?m)(\[[^\]]+\]\s*){re.escape(label)}"
+        updated = re.sub(pattern, rf"\1{new_name}", updated)
+    return updated
 
 # [수정] 회의 목록 조희
 # CREATOR_ID == user_id인 회의들 목록 조회용 함수
@@ -89,6 +109,19 @@ def update_meeting(
     if getattr(meeting_in, "purpose", None) is not None:
         meeting.PURPOSE = meeting_in.purpose
 
+    # Speaker mapping 업데이트 (UI에서 전달)
+    if getattr(meeting_in, "speaker_mapping", None) is not None:
+        meeting.SPEAKER_MAPPING = meeting_in.speaker_mapping
+        meeting.CONTENT = _apply_speaker_mapping_to_text(meeting.CONTENT, meeting.SPEAKER_MAPPING)
+        meeting.FINAL_TRANSCRIPT_TEXT = _apply_speaker_mapping_to_text(
+            meeting.FINAL_TRANSCRIPT_TEXT,
+            meeting.SPEAKER_MAPPING,
+        )
+        meeting.TRANSLATED_CONTENT = _apply_speaker_mapping_to_text(
+            getattr(meeting, "TRANSLATED_CONTENT", None),
+            meeting.SPEAKER_MAPPING,
+        )
+
     # Meeting 모델에 STATUS 컬럼을 나중에 추가한다면 여기서 meeting.STATUS도 갱신 가능
     # if meeting_in.status is not None:
     #     meeting.STATUS = meeting_in.status
@@ -131,6 +164,10 @@ def end_meeting(
         # 로컬 파일 경로면 LOCATION에도 저장 (blob: URL이 아닌 경우)
         if not audio_url.startswith('blob:'):
             meeting.LOCATION = audio_url
+    
+    # 참여자 정보 저장 (기본값으로 설정될 참여자 정보)
+    if getattr(end_request, "participants", None) is not None:
+        meeting.PARTICIPANTS = end_request.participants
 
     db.commit()
     db.refresh(meeting)

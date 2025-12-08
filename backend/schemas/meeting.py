@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 # 공통으로 쓰는 필드를 한 곳에 모아둔 베이스 클래스
 # 회의와 관련된 여러 스키마에서 공통으로 반복되는 필드를 한 곳에 모아둔 베이스 클래스
@@ -23,6 +23,11 @@ class MeetingUpdate(MeetingBase):
     status: Optional[str] = Field(
         None,
         description="회의 상태 (예: ONGOING, COMPLETED 등). 필요 시 업데이트"
+    )
+    speaker_mapping: Optional[Dict[str, str]] = Field(
+        None,
+        description="스피커 라벨과 실제 이름 매핑",
+        alias="speaker_mapping"
     )
 
 # 회의 응답(조회)에 사용할 스키마
@@ -62,6 +67,11 @@ class MeetingOut(MeetingBase):
         None,
         description="AI가 생성한 회의 요약",
         alias="ai_summary"
+    )
+    SPEAKER_MAPPING: Optional[Dict[str, str]] = Field(
+        None,
+        description="스피커 라벨과 실제 이름 매핑",
+        alias="speaker_mapping"
     )
     PARTICIPANTS: Optional[list] = Field(
         None,
@@ -118,4 +128,8 @@ class MeetingEndRequest(BaseModel):
     audio_url: Optional[str] = Field(
         None,
         description="오디오 파일 경로 (NCP Object Storage 등)"
+    )
+    participants: Optional[List[str]] = Field(
+        None,
+        description="회의 참석자 목록 (기본값으로 설정될 참여자 정보)"
     )

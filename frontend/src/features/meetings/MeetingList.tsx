@@ -152,58 +152,58 @@ export function MeetingList({ meetings, onUpdateMeeting, onDeleteMeeting }: Meet
 
   return (
     <>
-      <div className="space-y-4">
+      <div className="space-y-4 w-full">
         {/* Search and Filter Section */}
-        <Card className="w-full max-w-[1600px] mx-auto">
-          <CardContent className="pt-6">
-            <div className="grid gap-4 md:grid-cols-4">
-              <div className="md:col-span-2">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                  <Input
-                    placeholder="회의록 검색..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-10 w-full"
-                  />
+        <div className="w-full bg-white p-6 rounded-lg border mb-6">
+            <div className="space-y-4 w-full">
+              <div className="grid gap-4 md:grid-cols-4">
+                <div className="md:col-span-2">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <Input
+                      placeholder="회의록 검색..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pl-10 w-full"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Filter className="w-4 h-4 text-gray-500" />
+                  <Select value={filterStatus} onValueChange={(value: any) => setFilterStatus(value)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="상태 필터" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">전체</SelectItem>
+                      <SelectItem value="pending">진행 중</SelectItem>
+                      <SelectItem value="completed">완료</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Select value={sortBy} onValueChange={(value: any) => setSortBy(value)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="정렬" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="date">날짜순</SelectItem>
+                      <SelectItem value="title">제목순</SelectItem>
+                      <SelectItem value="progress">진행률순</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
-                <Filter className="w-4 h-4 text-gray-500" />
-                <Select value={filterStatus} onValueChange={(value: any) => setFilterStatus(value)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="상태 필터" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">전체</SelectItem>
-                    <SelectItem value="pending">진행 중</SelectItem>
-                    <SelectItem value="completed">완료</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Select value={sortBy} onValueChange={(value: any) => setSortBy(value)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="정렬" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="date">날짜순</SelectItem>
-                    <SelectItem value="title">제목순</SelectItem>
-                    <SelectItem value="progress">진행률순</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              {searchQuery && (
+                <div className="text-sm text-gray-600">
+                  검색 결과: {filteredAndSortedMeetings.length}개
+                </div>
+              )}
             </div>
-
-            {searchQuery && (
-              <div className="mt-4 text-sm text-gray-600">
-                검색 결과: {filteredAndSortedMeetings.length}개
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        </div>
 
         {/* 삭제 기능 버튼 */}
         <div className="mt-4 flex items-center justify-between border-t pt-4">
@@ -285,7 +285,7 @@ export function MeetingList({ meetings, onUpdateMeeting, onDeleteMeeting }: Meet
             </CardContent>
           </Card>
         ) : (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 w-full">
             {filteredAndSortedMeetings.map((meeting) => {
               const progress = calculateProgress(meeting);
               const completedCount = meeting.actionItems.filter(item => item.completed).length;

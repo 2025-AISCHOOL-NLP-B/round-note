@@ -1,6 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
 import { Button } from '@/shared/ui/button';
-import { Download, FileBarChart, Calendar, Users, Target, CheckCircle2, Clock, TrendingUp, ExternalLink, ListChecks } from 'lucide-react';
+import { Download, FileBarChart, Calendar, Users, Target, CheckCircle2, Clock, TrendingUp, ExternalLink, ListChecks, Mic } from 'lucide-react';
+import { TranscriptDisplay } from '@/components/TranscriptStatusBanner';
 import type { Meeting } from '@/features/dashboard/Dashboard';
 import { toast } from 'sonner';
 
@@ -119,6 +120,63 @@ ${meeting.content}
     URL.revokeObjectURL(url);
   };
 
+  // Markdown 형식의 요약 텍스트를 React 엘리먼트 배열로 변환
+  const renderMarkdownSummary = (markdownText: string | undefined): React.ReactNode[] => {
+    if (!markdownText) return [<p key="empty">요약 정보 없음</p>];
+
+    const lines = markdownText.split('\n');
+    const nodes: React.ReactNode[] = [];
+    let listItems: string[] = [];
+    let listKey = 0;
+
+    const finalizeList = () => {
+      if (listItems.length > 0) {
+        nodes.push(
+          <ul key={`ul-${listKey++}`} className="list-disc ml-6 space-y-1">
+            {listItems.map((item, index) => (
+              <li key={index} className="text-gray-700">{item}</li>
+            ))}
+          </ul>
+        );
+        listItems = [];
+      }
+    };
+
+    lines.forEach((line, index) => {
+      const trimmedLine = line.trim();
+      if (!trimmedLine) {
+        // 빈 줄은 리스트를 종결하고 무시
+        finalizeList();
+        return;
+      }
+
+      if (trimmedLine.startsWith('## ')) {
+        finalizeList();
+        const content = trimmedLine.substring(3).trim();
+        // Notion 블록과 유사하게 Heading 2 대신 Heading 3으로 변환
+        nodes.push(
+          <h3 key={`h3-${index}`} className="text-lg font-semibold mt-4 mb-2 text-gray-800 border-b border-gray-100 pb-1">
+            {content}
+          </h3>
+        );
+      } else if (trimmedLine.startsWith('- ')) {
+        // 리스트 항목을 모았다가 다음 블록 타입이 나오면 렌더링
+        listItems.push(trimmedLine.substring(2).trim());
+      } else {
+        finalizeList();
+        // 일반 텍스트는 <p> 태그로 렌더링
+        nodes.push(
+          <p key={`p-${index}`} className="whitespace-pre-wrap text-gray-700 mt-2 mb-2">
+            {trimmedLine}
+          </p>
+        );
+      }
+    });
+
+    finalizeList(); // 마지막에 리스트가 남아있으면 렌더링
+    return nodes;
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -217,7 +275,7 @@ ${meeting.content}
           <CardTitle>회의 요약</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="whitespace-pre-wrap text-gray-700">{meeting.summary}</p>
+          {renderMarkdownSummary(meeting.summary)}
         </CardContent>
       </Card>
 
@@ -253,12 +311,17 @@ ${meeting.content}
       {/* Full Meeting Content (회의 원문) */}
       <Card>
         <CardHeader>
-          <CardTitle>회의 원문</CardTitle>
+          <CardTitle className="flex items-center gap-2 text-foreground">
+            <Mic className="w-5 h-5 text-blue-600" />
+            회의 원문
+          </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="bg-gray-50 rounded-lg p-4 max-h-[500px] overflow-y-auto">
-            <p className="whitespace-pre-wrap text-gray-700">{meeting.content}</p>
-          </div>
+          <TranscriptDisplay 
+            transcript={meeting.content} 
+            isLoading={false} 
+            speakerMapping={meeting.speaker_mapping}
+          />
         </CardContent>
       </Card>
     </div>

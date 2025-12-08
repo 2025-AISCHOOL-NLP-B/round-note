@@ -86,6 +86,7 @@ const useRealtimeStream = (): RealtimeStreamControls => {
     const isPausedRef = useRef<boolean>(false); // 최신 isPaused 상태를 추적
     const silenceIntervalRef = useRef<NodeJS.Timeout | null>(null); // 침묵 오디오 전송 인터벌
     const mediaStreamRef = useRef<MediaStream | null>(null); // 마이크 스트림 참조
+    const segmentIdCounterRef = useRef<number>(0); // 고유 segment ID 생성용 카운터
 
     // Audio Processing Refs
     const audioContextRef = useRef<AudioContext | null>(null);
@@ -567,6 +568,9 @@ const useRealtimeStream = (): RealtimeStreamControls => {
         }
 
         try {
+            // 새로운 녹음 시작 시 segment ID 카운터 리셋
+            segmentIdCounterRef.current = 0;
+
             // [Fix] AudioContext를 WebSocket 연결 전에 미리 생성하여 실제 샘플레이트 감지
             if (!audioContextRef.current) {
                 audioContextRef.current = new AudioContext({ sampleRate: AUDIO_CONFIG.sampleRate });
@@ -651,8 +655,11 @@ const useRealtimeStream = (): RealtimeStreamControls => {
                             const cleanText = match ? match[3] : message.text;
                             const speaker = match ? `Speaker ${speakerNum}` : "Unknown";
 
+                            // 고유 ID 생성: timestamp + counter
+                            const uniqueId = `${Date.now()}_${segmentIdCounterRef.current++}`;
+
                             const newSegment: TranscriptSegment = {
-                                id: Date.now().toString(),
+                                id: uniqueId,
                                 timestamp: timeString,
                                 speaker,       // ← 파싱된 speaker 반영
                                 text: cleanText, // ← [Speaker X] 제거된 텍스트만 반영

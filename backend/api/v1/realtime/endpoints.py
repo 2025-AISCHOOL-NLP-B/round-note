@@ -69,12 +69,26 @@ async def websocket_endpoint(
     try:
         # 참여자 이름을 키워드 리스트로 파싱
         keywords = []
+        participant_list = []  # 원본 참여자 목록 저장용 (한글 포함)
         if participants:
             # 쉼표로 구분된 이름들을 리스트로 변환
-            keywords = [name.strip() for name in participants.split(",") if name.strip()]
-            logging.info(f"키워드 부스팅 활성화: {keywords}")
+            participant_list = [name.strip() for name in participants.split(",") if name.strip()]
+            logging.info(f"[WebSocket] Received participants from URL: {participant_list}")
+            
+            # Deepgram은 ASCII 문자만 지원하므로, 한글/특수문자 필터링
+            # ASCII 문자만 포함된 이름들만 키워드로 사용
+            keywords = [name for name in participant_list if all(ord(c) < 128 for c in name)]
+            
+            if keywords:
+                logging.info(f"키워드 부스팅 활성화: {keywords} (ASCII 이름 수: {len(keywords)})")
+            if len(keywords) < len(participant_list):
+                non_ascii_count = len(participant_list) - len(keywords)
+                logging.info(f"비-ASCII 이름 {non_ascii_count}개는 키워드 부스팅에서 제외됨")
+        else:
+            logging.info(f"[WebSocket] No participants received from URL")
         
         # 요청된 채널 수와 키워드에 맞춰 Deepgram URL 생성
+        # keywords가 있으면 자동으로 num_speakers hint가 설정됨
         dg_url, dg_headers = stt_service.get_realtime_stt_url(channels=channels, keywords=keywords)
         
         # meetingId가 있으면 해당 ID로 파일 생성, 없으면 랜덤 생성
@@ -171,7 +185,7 @@ async def websocket_endpoint(
                     except Exception as e:
                         logging.error(f"Failed to rename audio file: {e}")
 
-                # DB Update: meetingId가 있으면 오디오 경로 업데이트
+                # DB Update: meetingId가 있으면 오디오 경로 및 참여자 정보 업데이트
                 if final_meeting_id:
                     try:
                         # Use relative path for portability
@@ -183,6 +197,14 @@ async def websocket_endpoint(
                             if meeting:
                                 meeting.AUDIO_URL = relative_path
                                 meeting.LOCATION = relative_path
+                                
+                                # 참여자 목록을 PARTICIPANTS 필드에 저장 (원본 목록 사용: 한글 포함)
+                                if participant_list:
+                                    meeting.PARTICIPANTS = participant_list
+                                    logging.info(f"[WebSocket] ✅ Updated meeting {final_meeting_id} PARTICIPANTS field: {participant_list}")
+                                else:
+                                    logging.info(f"[WebSocket] ⚠️ No participant_list to save for meeting {final_meeting_id}")
+                                
                                 db.commit()
                                 logging.info(f"Updated meeting {final_meeting_id} audio_url to {relative_path}")
                             else:
@@ -374,7 +396,7 @@ async def forward_to_client(
                 logging.debug(f"DG RECEIVER: Skipped Deepgram message type: {result.get('type')}")
                 continue
             
-            # Deepgram 응답에서 전사 텍스트 추출 (로직은 streaming_way_DG.py 재활용)
+            # Deepgram 응답에서 전사 텍스트 추출
             transcript = result.get("channel", {}).get("alternatives", [{}])[0].get("transcript", "")
             if not transcript:
                 continue
@@ -391,45 +413,91 @@ async def forward_to_client(
                 if (channel_index == 0 and settings.paused_mic) or (channel_index == 1 and settings.paused_system):
                     logging.debug(f"DG RECEIVER: 채널 {channel_index} 일시정지 중 - 최종 전사 무시")
                     continue
-                
-                if speaker_id is not None:
-                    prefix = "System" if channel_index == 1 else "Mic"
-                    speaker_tag = f"[{prefix} Speaker {speaker_id}] "
-                else:
-                    speaker_tag = ""
 
-                final_text = speaker_tag + transcript
-                
-                # 3. (React 전송) 최종 전사 텍스트를 React로 전송
-                await client_ws.send_json({"type": "final_transcript", "text": final_text})
-                
-                # 4. 요약 활성화 시 버퍼에 저장
-                if settings.summary and not settings.is_paused:
-                    # 채널별 일시정지 상태 확인 후 버퍼 적재
-                    if (channel_index == 0 and settings.paused_mic) or (channel_index == 1 and settings.paused_system):
-                        logging.debug(f"Summary Buffer: 채널 {channel_index} 일시정지 - 버퍼 적재 스킵")
+                async def emit_segment(segment_speaker, segment_words):
+                    reconstructed_text = ""
+                    if segment_words:
+                        word_texts = [w.get("word") or "" for w in segment_words]
+                        reconstructed_text = " ".join(word_texts).strip()
+
+                    segment_text = reconstructed_text if reconstructed_text else transcript
+                    if not segment_text:
+                        return
+
+                    speaker_tag = ""
+                    if segment_speaker is not None:
+                        prefix = "System" if channel_index == 1 else "Mic"
+                        speaker_tag = f"[{prefix} Speaker {segment_speaker}] "
+
+                    final_text = speaker_tag + segment_text
+
+                    # 3. (React 전송) 최종 전사 텍스트를 React로 전송
+                    await client_ws.send_json({"type": "final_transcript", "text": final_text})
+                    
+                    # 4. 요약 활성화 시 버퍼에 저장
+                    if settings.summary and not settings.is_paused:
+                        # 채널별 일시정지 상태 확인 후 버퍼 적재
+                        if (channel_index == 0 and settings.paused_mic) or (channel_index == 1 and settings.paused_system):
+                            logging.debug(f"Summary Buffer: 채널 {channel_index} 일시정지 - 버퍼 적재 스킵")
+                        else:
+                            current_time = time.time()
+                            summary_state["transcript_buffer"].append({
+                                "text": final_text,
+                                "timestamp": current_time
+                            })
+                            # 첫 전사 시간 기록
+                            if summary_state["first_transcript_time"] is None:
+                                summary_state["first_transcript_time"] = current_time
+                                logging.info(f"✅ 첫 전사 시간 기록: {current_time}")
+                            buffer_count = len(summary_state["transcript_buffer"])
+                            logging.info(f"📝 전사 버퍼 추가: 총 {buffer_count}개 항목")
+                    
+                    # 5. 번역 태스크 생성
+                    if settings.translate:
+                        # 번역도 채널 일시정지 시 스킵
+                        if (channel_index == 0 and settings.paused_mic) or (channel_index == 1 and settings.paused_system):
+                            logging.debug(f"Translation Task: 채널 {channel_index} 일시정지 - 번역 스킵")
+                        else:
+                            asyncio.create_task(
+                                get_translation_and_send(client_ws, final_text, llm_service)
+                            )
+
+                # speaker change: send previous segment immediately (tiny delay between bursts to avoid UI flood)
+                if words:
+                    unique_speakers = {w.get("speaker") for w in words}
+                    if len(unique_speakers) > 1:
+                        current_speaker = words[0].get("speaker")
+                        current_words = []
+                        delay_between_segments = 0.05  # soften UI burst when multiple bubbles appear
+                        i = 0
+                        total_words = len(words)
+                        while i < total_words:
+                            w = words[i]
+                            w_speaker = w.get("speaker")
+                            if w_speaker == current_speaker:
+                                current_words.append(w)
+                                i += 1
+                                continue
+
+                            # collect contiguous run for new speaker
+                            new_speaker = w_speaker
+                            new_run = []
+                            while i < total_words and words[i].get("speaker") == new_speaker:
+                                new_run.append(words[i])
+                                i += 1
+
+                            if current_words:
+                                await emit_segment(current_speaker, current_words)
+                                await asyncio.sleep(delay_between_segments)
+                            current_speaker = new_speaker
+                            current_words = new_run
+
+                        if current_words:
+                            await emit_segment(current_speaker, current_words)
                     else:
-                        current_time = time.time()
-                        summary_state["transcript_buffer"].append({
-                            "text": final_text,
-                            "timestamp": current_time
-                        })
-                        # 첫 전사 시간 기록
-                        if summary_state["first_transcript_time"] is None:
-                            summary_state["first_transcript_time"] = current_time
-                            logging.info(f"✅ 첫 전사 시간 기록: {current_time}")
-                        buffer_count = len(summary_state["transcript_buffer"])
-                        logging.info(f"📝 전사 버퍼 추가: 총 {buffer_count}개 항목")
-                
-                # 5. 번역 태스크 생성
-                if settings.translate:
-                    # 번역도 채널 일시정지 시 스킵
-                    if (channel_index == 0 and settings.paused_mic) or (channel_index == 1 and settings.paused_system):
-                        logging.debug(f"Translation Task: 채널 {channel_index} 일시정지 - 번역 스킵")
-                    else:
-                        asyncio.create_task(
-                            get_translation_and_send(client_ws, final_text, llm_service)
-                        )
+                        await emit_segment(speaker_id, words)
+                else:
+                    await emit_segment(speaker_id, [])
                 
             else:
                 # 5. 임시 텍스트 처리: React로 임시 전사 텍스트 전송

@@ -106,6 +106,9 @@ export function MeetingDetail({
     summary: {},
     content: {}
   });
+
+  const [newSpeakerLabel, setNewSpeakerLabel] = useState('');
+  const [newSpeakerName, setNewSpeakerName] = useState('');
   
   // 원문 언어 (현재는 한국어로 고정, 추후 설정에서 변경 가능)
   const sourceLang = 'ko';
@@ -193,6 +196,13 @@ export function MeetingDetail({
   const [audioSrc, setAudioSrc] = useState('');
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
 
+  const applySpeakerRename = (text: string | undefined | null, label: string, newName: string) => {
+    if (!text) return text || '';
+    if (!label || !newName) return text;
+    const pattern = new RegExp(`(^\\s*\\[[^\\]]+\\]\\s*)${label.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}`, 'gm');
+    return text.replace(pattern, `$1${newName}`);
+  };
+
   // 번역 텍스트에 언어별 포맷팅 적용
   const formatTranslatedText = (text: string | undefined, targetLang: string): string => {
     if (!text) return '';
@@ -278,6 +288,63 @@ export function MeetingDetail({
     }).join('\n');
 
     return formatted;
+  };
+
+  // Markdown 형식의 요약 텍스트를 React 엘리먼트 배열로 변환
+  const renderMarkdownSummary = (markdownText: string | undefined): React.ReactNode[] => {
+    if (!markdownText) return [<p key="empty">요약 정보 없음</p>];
+
+    const lines = markdownText.split('\n');
+    const nodes: React.ReactNode[] = [];
+    let listItems: string[] = [];
+    let listKey = 0;
+
+    const finalizeList = () => {
+      if (listItems.length > 0) {
+        nodes.push(
+          <ul key={`ul-${listKey++}`} className="list-disc ml-6 space-y-1">
+            {listItems.map((item, index) => (
+              <li key={index} className="text-gray-700">{item}</li>
+            ))}
+          </ul>
+        );
+        listItems = [];
+      }
+    };
+
+    lines.forEach((line, index) => {
+      const trimmedLine = line.trim();
+      if (!trimmedLine) {
+        // 빈 줄은 리스트를 종결하고 무시
+        finalizeList();
+        return;
+      }
+
+      if (trimmedLine.startsWith('## ')) {
+        finalizeList();
+        const content = trimmedLine.substring(3).trim();
+        // Notion 블록과 유사하게 Heading 2 대신 Heading 3으로 변환
+        nodes.push(
+          <h3 key={`h3-${index}`} className="text-lg font-semibold mt-4 mb-2 text-gray-800 border-b border-gray-100 pb-1">
+            {content}
+          </h3>
+        );
+      } else if (trimmedLine.startsWith('- ')) {
+        // 리스트 항목을 모았다가 다음 블록 타입이 나오면 렌더링
+        listItems.push(trimmedLine.substring(2).trim());
+      } else {
+        finalizeList();
+        // 일반 텍스트는 <p> 태그로 렌더링
+        nodes.push(
+          <p key={`p-${index}`} className="whitespace-pre-wrap text-gray-700 mt-2 mb-2">
+            {trimmedLine}
+          </p>
+        );
+      }
+    });
+
+    finalizeList(); // 마지막에 리스트가 남아있으면 렌더링
+    return nodes;
   };
 
   // ElevenLabs 재전사 상태 및 폴링 훅
@@ -570,6 +637,39 @@ export function MeetingDetail({
     }
   };
 
+  const handleUpdateSpeaker = async (originalLabel: string, newName: string) => {
+    const label = originalLabel.trim();
+    const name = newName.trim();
+
+    if (!label || !name) return;
+
+    const updatedMapping = { ...(meeting.speaker_mapping || {}), [label]: name };
+    const updatedMeeting = {
+      ...meeting,
+      speaker_mapping: updatedMapping,
+      content: applySpeakerRename(meeting.content, label, name),
+      summary: meeting.summary,
+      actionItems: meeting.actionItems,
+    } as Meeting;
+
+    setMeeting(updatedMeeting);
+    onUpdateMeeting(updatedMeeting);
+
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      await fetch(`${apiUrl}/api/v1/meetings/${meeting.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({ speaker_mapping: updatedMapping }),
+      });
+    } catch (error) {
+      console.error('Failed to update speaker mapping:', error);
+    }
+  };
+
   const calculateProgress = () => {
     if (meeting.actionItems.length === 0) return 100;
     const completed = meeting.actionItems.filter(item => item.completed).length;
@@ -847,6 +947,8 @@ export function MeetingDetail({
     };
   }, []);
 
+  const speakerEntries = Object.entries(meeting.speaker_mapping || {});
+
   return (
     <div className="w-[1100px] mx-auto px-4 space-y-4 md:space-y-6">
       {/* Header */}
@@ -1065,9 +1167,9 @@ export function MeetingDetail({
                       <div className="text-center py-4 text-gray-500">번역 중...</div>
                     ) : (
                       <div className="prose max-w-none">
-                        <p className="whitespace-pre-wrap text-gray-700">
-                          {summaryLang === 'ko' ? meeting.summary : translatedSummary || meeting.summary}
-                        </p>
+                        {renderMarkdownSummary(
+                          summaryLang === 'ko' ? meeting.summary : translatedSummary || meeting.summary
+                        )}
                       </div>
                     )}
                   </CardContent>
@@ -1218,6 +1320,62 @@ export function MeetingDetail({
                   </div>
                 )}
 
+                <div className="mt-3 border border-dashed border-slate-200 rounded-lg p-3 bg-white">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <User className="w-4 h-4 text-blue-600" />
+                      <span className="text-sm font-semibold">화자 매핑</span>
+                    </div>
+                    <span className="text-xs text-gray-500">{speakerEntries.length}개</span>
+                  </div>
+                  <div className="space-y-2">
+                    {speakerEntries.length === 0 && (
+                      <p className="text-xs text-gray-500">아직 지정된 매핑이 없습니다. 스피커 라벨을 참가자 이름으로 교체해 주세요.</p>
+                    )}
+                    {speakerEntries.map(([label, name]) => (
+                      <div key={`${label}-${name}`} className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500 min-w-[80px]">{label}</span>
+                        <Input
+                          key={`${label}-${name}`}
+                          defaultValue={name}
+                          onBlur={(e) => {
+                            if (e.target.value !== name) {
+                              handleUpdateSpeaker(label, e.target.value);
+                            }
+                          }}
+                          className="h-8 text-sm flex-1"
+                        />
+                      </div>
+                    ))}
+                    <div className="flex flex-col sm:flex-row gap-2 pt-2 border-t border-dashed border-slate-200 mt-2">
+                      <Input
+                        placeholder="예: Speaker 1"
+                        value={newSpeakerLabel}
+                        onChange={(e) => setNewSpeakerLabel(e.target.value)}
+                        className="h-9 text-sm"
+                      />
+                      <Input
+                        placeholder="참가자 이름"
+                        value={newSpeakerName}
+                        onChange={(e) => setNewSpeakerName(e.target.value)}
+                        className="h-9 text-sm"
+                      />
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="sm:w-auto"
+                        onClick={() => {
+                          handleUpdateSpeaker(newSpeakerLabel, newSpeakerName);
+                          setNewSpeakerLabel('');
+                          setNewSpeakerName('');
+                        }}
+                      >
+                        저장
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
                 {(meeting.keyDecisions?.length ?? 0)> 0 && (
                   <div>
                     <h4 className="flex items-center gap-2 mb-2">
@@ -1324,6 +1482,8 @@ export function MeetingDetail({
                       <TranscriptDisplay 
                         transcript={contentLang === sourceLang ? meeting.content : translatedContent || meeting.content}
                         isLoading={false}
+                        speakerMapping={meeting.speaker_mapping}
+                        onUpdateSpeaker={handleUpdateSpeaker}
                       />
                     )}
                   </CardContent>

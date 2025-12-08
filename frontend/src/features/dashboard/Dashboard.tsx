@@ -33,8 +33,8 @@ import {
 } from "lucide-react";
 import { Toaster } from "../../shared/ui/sonner";
 import Image from "next/image";
-import logoImage from "../../../public/1479b69d0df16b28749512726e3ffc0f8c722c85.png";
-import logoSmall from "../../../public/60426c137b413d34e2b76e4bc10e67509bb612fb.png";
+import logoImage from "../../../public/round_note_main_logo.svg";
+import logoSmall from "../../../public/round_note_closed_logo.svg";
 
 export interface ActionItem {
   id: string;
@@ -65,6 +65,7 @@ export interface Meeting {
   nextSteps?: string[];
   audioUrl?: string;
   purpose?: string;
+  speaker_mapping?: Record<string, string>;
 }
 
 type MeetingMode = 'video-conference' | 'offline' | 'file-upload';
@@ -119,7 +120,8 @@ export function Dashboard() {
           participants: m.participants || [],
           keyDecisions: m.key_decisions || [],
           nextSteps: m.next_steps || [],
-          audioUrl: m.audio_url || ''
+          audioUrl: m.audio_url || '',
+          speaker_mapping: m.speaker_mapping || {}
         }));
         setMeetings(mappedMeetings);
       }
@@ -199,7 +201,7 @@ export function Dashboard() {
   // 🔹 Home 섹션 렌더링 함수 분리 (meetingMode 기능 포함)
   const renderHome = () => (
     <div className="space-y-5">
-      <div className="bg-gradient-to-br from-primary to-blue-700 rounded-2xl p-8 shadow-md text-white w-[1000px]">
+      <div className="bg-gradient-to-br from-primary to-blue-700 rounded-2xl p-8 shadow-md text-white">
         <h2 className="mb-3 text-white">회의 시작하기</h2>
         <p className="text-white/90 mb-6">
           실시간 음성 인식으로 회의를 기록하고 자동으로 요약과 액션
@@ -337,7 +339,7 @@ export function Dashboard() {
 
   // 🔹 Settings 섹션 렌더링 함수 분리
   const renderSettings = () => (
-    <div className="bg-white rounded-2xl p-8 shadow-sm border border-border w-[1100px] max-w-[1200px] mx-auto">
+    <div className="bg-white rounded-2xl p-8 shadow-sm border border-border">
       <h2 className="mb-6 text-foreground">환경설정</h2>
       <div className="space-y-3">
         {/* 템플릿 설정 */}
@@ -508,11 +510,11 @@ export function Dashboard() {
   );
 
   return (
-    <div className="min-h-screen bg-background flex">
+    <div className="min-h-screen bg-background w-screen overflow-x-hidden">
       {/* Sidebar */}
       <aside
         className={`
-            bg-white border-r border-border sticky top-0 h-screen transition-all duration-300 flex-shrink-0 hidden md:flex flex-col
+            bg-white border-r border-border fixed left-0 top-0 h-screen transition-all duration-300 flex-shrink-0 hidden md:flex flex-col z-40
             ${sidebarOpen ? "w-64" : "w-20"}
           `}
       >
@@ -594,7 +596,7 @@ export function Dashboard() {
       </aside>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className={`flex-1 flex flex-col min-w-0 transition-all duration-300 ${sidebarOpen ? "md:ml-64" : "md:ml-20"}`}>
         {/* Mobile Header */}
         <header className="bg-white border-b border-border p-4 md:hidden sticky top-0 z-50">
           <div className="flex items-center justify-between">
@@ -643,8 +645,8 @@ export function Dashboard() {
         </header>
 
         {/* Main Content */}
-        <main className="flex-1 p-4 md:p-8 overflow-auto">
-          <div className="max-w-6xl mx-auto">
+        <main className="flex-1 p-4 md:p-8 overflow-y-auto w-full" style={{ scrollbarGutter: 'stable' }}>
+          <div className="max-w-[1400px] mx-auto w-full">
             {/* ✅ Hybrid 렌더링 방식 적용 */}
 
             {/* 1. Home 섹션: 항상 렌더링하되 hidden으로 제어 */}

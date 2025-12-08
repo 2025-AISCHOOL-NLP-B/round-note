@@ -86,6 +86,7 @@ def list_meetings(
             "translated_content": meeting.TRANSLATED_CONTENT,
             "ai_summary": meeting.AI_SUMMARY,
             "participants": meeting.PARTICIPANTS,
+            "speaker_mapping": meeting.SPEAKER_MAPPING,
             "key_decisions": meeting.KEY_DECISIONS,
             "next_steps": meeting.NEXT_STEPS,
             "audio_url": meeting.AUDIO_URL,
@@ -166,6 +167,7 @@ def get_meeting(
         "translated_content": db_meeting.TRANSLATED_CONTENT,
         "ai_summary": db_meeting.AI_SUMMARY,
         "participants": db_meeting.PARTICIPANTS,
+        "speaker_mapping": db_meeting.SPEAKER_MAPPING,
         "key_decisions": db_meeting.KEY_DECISIONS,
         "next_steps": db_meeting.NEXT_STEPS,
         "audio_url": db_meeting.AUDIO_URL,
@@ -314,6 +316,7 @@ def update_meeting(
         "translated_content": refreshed.TRANSLATED_CONTENT,
         "ai_summary": refreshed.AI_SUMMARY,
         "participants": refreshed.PARTICIPANTS,
+        "speaker_mapping": refreshed.SPEAKER_MAPPING,
         "key_decisions": refreshed.KEY_DECISIONS,
         "next_steps": refreshed.NEXT_STEPS,
         "audio_url": refreshed.AUDIO_URL,
@@ -375,6 +378,32 @@ def delete_meeting(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="본인이 생성한 회의만 삭제할 수 있습니다."
         )
+    
+    # 오디오 파일 삭제
+    audio_path = db_meeting.LOCATION or db_meeting.AUDIO_URL
+    if audio_path:
+        try:
+            # 상대경로/절대경로 처리
+            if not os.path.isabs(audio_path):
+                # 상대경로인 경우 여러 위치 시도
+                possible_paths = [
+                    audio_path,
+                    os.path.join('./audio_storage', os.path.basename(audio_path)),
+                    os.path.join('/app/audio_storage', os.path.basename(audio_path)),
+                ]
+                for path in possible_paths:
+                    if os.path.exists(path):
+                        os.remove(path)
+                        print(f"🗑️ [DELETE] Removed audio file: {path}")
+                        break
+            else:
+                # 절대경로인 경우 직접 삭제
+                if os.path.exists(audio_path):
+                    os.remove(audio_path)
+                    print(f"🗑️ [DELETE] Removed audio file: {audio_path}")
+        except Exception as e:
+            # 파일 삭제 실패해도 회의는 삭제 진행
+            print(f"⚠️ [DELETE] Failed to remove audio file: {audio_path}, error: {e}")
     
     # 회의 삭제
     meeting_crud.delete_meeting(db=db, meeting=db_meeting)
@@ -506,23 +535,42 @@ async def end_meeting_and_process(
         import redis
         from rq import Queue
         from backend.worker import retranscribe_meeting
+        import logging
+        logger = logging.getLogger(__name__)
 
         redis_url = os.getenv("REDIS_URL")
         if redis_url:
-            conn = redis.from_url(redis_url)
-            q = Queue("stt", connection=conn)
+            logger.info(f"=== [END MEETING] Enqueuing STT job for meeting {meeting_id} ===")
+            logger.info(f"Redis URL: {redis_url[:30]}...")
+            
+            try:
+                conn = redis.from_url(redis_url)
+                conn.ping()
+                logger.info("✅ Redis connection successful")
+                
+                q = Queue("stt", connection=conn)
+                logger.info(f"Queue 'stt' created, current jobs: {q.count}")
 
-            # 오디오 파일명 결정
-            audio_path = ended_meeting.LOCATION or ended_meeting.AUDIO_URL
-            audio_filename = os.path.basename(audio_path) if audio_path else f"{meeting_id}.wav"
+                # 오디오 파일명 결정
+                audio_path = ended_meeting.LOCATION or ended_meeting.AUDIO_URL
+                audio_filename = os.path.basename(audio_path) if audio_path else f"{meeting_id}.wav"
+                logger.info(f"Audio filename: {audio_filename}")
 
-            q.enqueue(retranscribe_meeting, meeting_id, audio_filename)
+                job = q.enqueue(retranscribe_meeting, meeting_id, audio_filename)
+                logger.info(f"✅ STT job enqueued successfully: job_id={job.id}, status={job.get_status()}")
+            except Exception as redis_error:
+                logger.error(f"❌ Redis enqueue failed: {str(redis_error)}", exc_info=True)
+                raise
         else:
+            logger.warning("⚠️ REDIS_URL not set, running synchronously")
             # 환경에 Redis가 없으면 동기 실행 (개발/테스트용)
             retranscribe_meeting(meeting_id, None)
-    except Exception:
+    except Exception as e:
         # 재전사 큐 등록 실패해도 회의 종료는 계속 진행
-        pass
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"❌ [END MEETING] Failed to enqueue retranscription: {str(e)}", exc_info=True)
+        print(f"❌ [END MEETING] Failed to enqueue retranscription: {str(e)}")  # stdout도 출력
 
     return {
         "message": f"회의가 종료되었습니다. (meeting_id: {meeting_id})",
@@ -772,21 +820,39 @@ def finalize_meeting_and_enqueue_stt(
     db.commit()
 
     # Enqueue RQ job
+    import logging
+    logger = logging.getLogger(__name__)
+    
     redis_url = os.getenv("REDIS_URL")
     if not redis_url:
+        logger.error("❌ REDIS_URL environment variable not set")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="REDIS_URL 환경 변수가 필요합니다.")
-    conn = redis.from_url(redis_url)
-    q = Queue("stt", connection=conn)
+    
+    logger.info(f"=== [FINALIZE] Enqueuing finalization job for meeting {meeting_id} ===")
+    logger.info(f"Redis URL: {redis_url[:30]}...")
+    
+    try:
+        conn = redis.from_url(redis_url)
+        conn.ping()
+        logger.info("✅ Redis connection successful")
+        
+        q = Queue("stt", connection=conn)
+        logger.info(f"Queue 'stt' created, current jobs: {q.count}")
 
-    # Determine audio filename
-    audio_path = db_meeting.LOCATION or db_meeting.AUDIO_URL
-    audio_filename = os.path.basename(audio_path) if audio_path else f"{meeting_id}.wav"
+        # Determine audio filename
+        audio_path = db_meeting.LOCATION or db_meeting.AUDIO_URL
+        audio_filename = os.path.basename(audio_path) if audio_path else f"{meeting_id}.wav"
+        logger.info(f"Audio filename: {audio_filename}")
 
-    # Import worker task lazily to avoid circular imports
-    from backend.worker import retranscribe_meeting
-    job = q.enqueue(retranscribe_meeting, meeting_id, audio_filename)
+        # Import worker task lazily to avoid circular imports
+        from backend.worker import retranscribe_meeting
+        job = q.enqueue(retranscribe_meeting, meeting_id, audio_filename)
+        logger.info(f"✅ Finalization job enqueued successfully: job_id={job.id}, status={job.get_status()}")
 
-    return {"status": "queued", "meeting_id": meeting_id, "job_id": job.id}
+        return {"status": "queued", "meeting_id": meeting_id, "job_id": job.id}
+    except Exception as e:
+        logger.error(f"❌ Failed to enqueue finalization job: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to enqueue: {str(e)}")
 
 # [추가(테스트용)]
 class DummyContentRequest(BaseModel):

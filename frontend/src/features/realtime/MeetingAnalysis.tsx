@@ -632,6 +632,12 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
   };
 
   const extractParticipants = () => {
+    // Prioritize participants from PARTICIPANTS field (set during meeting)
+    if (meeting.participants && meeting.participants.length > 0) {
+      return meeting.participants;
+    }
+    
+    // Fallback: extract from action items and content
     const participants = new Set<string>();
     meeting.actionItems.forEach(item => {
       if (item.assignee && item.assignee !== '미정') {
@@ -898,24 +904,16 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
                 </div>
               )}
               
-              {/* Jira & Notion 동기화 버튼 */}
+              {/* Jira 동기화 버튼 */}
               {meeting.actionItems.length > 0 && (
-                <div className="mt-4 pt-4 border-t flex justify-center gap-3">
+                <div className="mt-4 pt-4 border-t flex justify-center">
                   <Button 
                     variant="outline" 
-                    className="w-[200px] gap-2 border-[#0052CC] text-[#0052CC] hover:bg-[#0052CC]/10" 
+                    className="w-[200px] gap-2 border-[#000000] text-[#000000] hover:bg-[#000000]/10" 
                     onClick={handleExportToJira}
                   >
                     <ExternalLink className="w-4 h-4" />
                     Jira에 동기화
-                  </Button>
-                  <Button 
-                    variant="outline" 
-                    className="w-[200px] gap-2 border-[#000000] text-[#000000] hover:bg-[#000000]/10" 
-                    onClick={handleExportToNotion}
-                  >
-                    <FileBarChart className="w-4 h-4" />
-                    Notion에 동기화
                   </Button>
                 </div>
               )}
@@ -1104,8 +1102,18 @@ export function MeetingAnalysis({ meeting: meetingProp, onUpdateMeeting }: Meeti
 
         
 
-        <TabsContent value="report" className="mt-4">
+        <TabsContent value="report" className="mt-4 space-y-4">
           <MeetingReport meeting={meeting} showExports={false} />
+          <div className="pt-4 border-t flex justify-center">
+            <Button 
+              variant="outline" 
+              className="w-[200px] gap-2 border-[#0052CC] text-[#0052CC] hover:bg-[#0052CC]/10" 
+              onClick={handleExportToNotion}
+            >
+              <FileBarChart className="w-4 h-4" />
+              Notion에 동기화
+            </Button>
+          </div>
         </TabsContent>
       </Tabs>
 
