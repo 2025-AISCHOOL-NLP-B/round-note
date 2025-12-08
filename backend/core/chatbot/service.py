@@ -19,11 +19,6 @@ from backend.schemas.chatbot import (
     MeetingContext,
 )
 from backend.core.llm.rag.retriever import RAGRetriever
-from backend.core.chatbot.conversation_helpers import (
-    should_skip_llm,
-    enhance_answer,
-    reinterpret_question,
-)
 from backend.core.chatbot.evaluation import PerformanceEvaluator
 from backend.core.chatbot.adversarial_intelligence import AdversarialIntelligence
 
@@ -424,11 +419,7 @@ class ChatbotService:
 
         logger.info(f"풀텍스트 챗봇 처리 시작 - 회의 ID: {payload.meeting_ids}")
 
-        # ========== 1) 질문 재해석 (의도 파악 및 힌트 추가) ==========
-        reinterpreted_question = reinterpret_question(payload.question)
-        logger.info(f"질문 재해석: '{payload.question}' → '{reinterpreted_question}'")
-
-        # ========== 2) 적대적 지능 질문 감지 ==========
+        # ========== 1) 적대적 지능 질문 감지 ==========
         is_adversarial = self._is_adversarial_question(payload.question)
 
         if is_adversarial and len(payload.meeting_ids) == 1:
@@ -463,19 +454,7 @@ class ChatbotService:
                 # 실패 시 일반 RAG 챗봇으로 폴백
                 logger.info("적대적 지능 분석 실패 - 일반 RAG로 폴백")
 
-        # ========== 3) 인사말/일상 대화 감지 (LLM 호출 없이 처리) ==========
-        skip_llm, direct_response = should_skip_llm(payload.question)
-
-        if skip_llm:
-            logger.info(f"LLM 스킵 - 직접 응답: {direct_response[:50]}...")
-            return FullTextChatbotResponse(
-                question=payload.question,
-                answer=direct_response,
-                used_meetings=[],
-                created_at=datetime.now(),
-            )
-
-        # ========== 4) 회의 조회 ==========
+        # ========== 2) 회의 조회 ==========
         meetings = (
             db.query(models.Meeting)
             .filter(models.Meeting.MEETING_ID.in_(payload.meeting_ids))
@@ -498,7 +477,7 @@ class ChatbotService:
 
             # 각 회의에서 관련 청크 검색 (벡터 유사도 기반)
             retrieved_results = retriever.retrieve(
-                query=reinterpreted_question,
+                query=payload.question,
                 k=10,  # 각 회의당 최대 10개 청크
                 meeting_id=meeting.MEETING_ID,
             )
@@ -554,17 +533,12 @@ class ChatbotService:
         if not all_retrieved_chunks:
             logger.warning("RAG 검색 결과가 없습니다. RAG 폴백 모드로 전환합니다.")
             # ✅ RAG 폴백 전략: 검색 결과가 없어도 LLM의 일반 지식으로 답변 시도
-            fallback_system_prompt = """당신은 회의 전문 AI 어시스턴트입니다.
+            fallback_system_prompt = """현재 회의 내용에서는 관련 정보를 찾기 어렵습니다.
+그러나 일반적인 상황을 기준으로 도움이 될 만한 간단한 조언을 알려드릴게요.
 
-현재 회의 전사 데이터에서 관련 정보를 찾을 수 없었습니다.
-하지만 사용자에게 도움이 될 수 있도록 일반적인 지식과 조언을 제공하세요.
+답변은 짧고 가독성 좋게 작성합니다."""
 
-답변 시 다음을 포함하세요:
-1. 회의 데이터에서 정보를 찾을 수 없다는 점 명시
-2. 일반적인 업무 관행이나 추천 사항 제공
-3. 사용자가 어떻게 정보를 찾을 수 있는지 안내"""
-
-            fallback_user_prompt = f"""사용자 질문: {reinterpreted_question}
+            fallback_user_prompt = f"""사용자 질문: {payload.question}
 
 회의 전사 데이터에서 관련 정보를 찾을 수 없었습니다.
 하지만 질문에 대해 일반적인 조언이나 도움이 될 만한 정보를 제공해주세요."""
@@ -619,59 +593,32 @@ class ChatbotService:
 
         combined_context = "\n\n".join(context_parts) + f"\n\n[액션 아이템 정보]\n{action_items_context}"
 
-        # ========== 8) System/User 프롬프트 구성 (유연한 프롬프트 + RAG 폴백) ==========
-        system_prompt = """당신은 사용자의 회의 기록과 업무를 돕는 'Round Note AI 비서'입니다.  
-회의 내용을 기반으로 하되, 필요할 경우 외부 자료를 검색·참조하여 **새로운 인사이트**를 제공합니다.  
-답변은 옆자리 유능한 동료가 정리해주는 듯 **친절하고 가독성 있게** 표현합니다.  
+        # ========== 8) System/User 프롬프트 구성 ==========
+        system_prompt = """당신은 한국어 기반 GPT 스타일 AI 어시스턴트입니다.
 
-[핵심 원칙]  
-1. **두괄식 요약**: 결론부터 제시하고, 불필요한 서론은 줄입니다.  
-2. **구조화된 표현**:  
-   - 📌, 📋, ✨ 이모지로 섹션 구분  
-   - **항목 제목은 반드시 볼드체로 강조** (예: **실험기기 준비 및 검토**)  
-   - 설명 문단은 불릿(-)으로 정리  
-   - 문단 구분은 반드시 `\n\n`으로 처리  
-   - 줄글 형식으로 이어 쓰지 말고, 항목별로 독립된 블록으로 작성  
-3. **톤 & 스타일**: "~입니다/합니다"체를 유지하되, 딱딱하지 않고 부드럽게.  
-   - 필요 시 **색상 강조(span 태그 활용)** 가능 (예: `<span class="text-red-600 font-bold">위험 분석</span>`)  
-4. **맥락 반영**: 회의 내용 + 외부 검색 결과를 결합해 **업무 효율을 높이는 인사이트**를 제공합니다.  
-5. **정직한 답변**: 정보가 부족하면 솔직히 말하고, 대안이나 추가 제안을 제공합니다.  
+[기본 원칙]
+- 답변은 짧고 명확하며 가독성이 좋아야 합니다.
+- 회의와 관련된 질문이면 제공된 회의 컨텍스트를 우선 사용합니다.
+- 회의와 무관한 질문이면 GPT처럼 자연스럽고 유연하게 대화합니다.
+- 정보가 부족하면 “해당 정보는 회의에 없었습니다”가 아니라 “찾기 어려워요”처럼 부드럽게 말합니다.
+- 보고서 형식(핵심 요약, 상세 내용, 추가 제안 등)을 강요하지 않습니다.
+- 목록은 최대 3개까지만, 문장은 1~3줄 단위로 끊어 가독성을 높입니다.
+- 과한 단락·장문 금지.
 
-[답변 구조 가이드]  
+[스타일 가이드]
+- 존댓말 유지하되 대화체로.
+- 이모지는 중요한 포인트에만 제한적으로 사용.
+- 불필요한 굵은 글씨, 색상 강조 금지.
+- 문단 간 줄바꿈은 필수.
 
-📌 **핵심 요약**  
-
-- 질문에 대한 결론을 2~3줄로 명확히 제시  
-
-📋 **상세 내용 (액션 아이템)**  
-
-1. **실험기기 준비 및 검토**  
-
-   - 회의 초반에 실험기기 필요성 언급이 있었으니, 관련 장비와 실험 계획을 점검하세요.  
-
-2. **상황 분석 및 대비책 마련**  
-
-   - 화산 폭발이나 천문학적 재앙 등 다양한 재앙 가능성에 대해 논의되었으니, <span class="text-red-600 font-bold">위험 분석</span>과 대응 전략을 수립하세요.  
-
-3. **심리적 지원 및 정보 공유**  
-
-   - 지구 멸망에 대한 불안과 걱정을 공유하는 부분이 있으니, 팀원들의 **심리적 안정**과 **신뢰할 수 있는 정보 제공**이 중요합니다.  
-
-4. **계속되는 논의 및 조사**  
-
-   - 회의 중 여러 질문과 의문이 나오고 있으니, 추가 조사와 지속적인 논의를 위한 자료 준비가 필요합니다.  
-
-✨ **추가 제안**  
-
-- 액션 아이템을 **우선순위별로 정리**하고, **담당자와 마감일**을 지정하세요.  
-- 외부 전문가 의견을 참고해 **리스크 대응 전략**을 보완하세요.  
-- 후속 회의에서 **액션 아이템 진행 상황**을 점검하는 시간을 마련하세요.  
+[안전 원칙]
+- 적대적/위험 질문은 안전하게 중립적으로.
 """
 
         user_prompt = (
             f"[RAG 검색 결과 - 질문과 관련된 회의 발언들]\n"
             f"{combined_context}\n\n"
-            f"[사용자 질문]\n{reinterpreted_question}\n\n"
+            f"[사용자 질문]\n{payload.question}\n\n"
             "위 검색 결과만을 근거로, 한국어로 자연스럽게 답변하세요."
         )
 
@@ -690,15 +637,12 @@ class ChatbotService:
         answer_text = self._invoke_llm(system_prompt, user_prompt, conversation_history)
         logger.info(f"LLM 호출 완료 - 답변 길이: {len(answer_text)}")
 
-        # ========== 11) 답변 패턴 다양화 ==========
-        enhanced_answer = enhance_answer(answer_text, payload.question)
-
-        # ========== 12) 성능 평가 (활성화된 경우) ==========
+        # ========== 11) 성능 평가 (활성화된 경우) ==========
         if self.enable_evaluation and self.evaluator and start_time:
             end_time = time.time()
             metrics = self.evaluator.evaluate_all(
                 question=payload.question,
-                answer=enhanced_answer,
+                answer=answer_text,
                 context=combined_context,
                 retrieved_chunks=top_chunks,  # RAG 모드에서 검색된 청크 전달
                 start_time=start_time,
@@ -713,10 +657,10 @@ class ChatbotService:
                 f"응답시간: {metrics.response_time_ms:.1f}ms"
             )
 
-        # ========== 13) 응답 생성 ==========
+        # ========== 12) 응답 생성 ==========
         response = FullTextChatbotResponse(
             question=payload.question,
-            answer=enhanced_answer,
+            answer=answer_text,
             used_meetings=meeting_contexts,
             created_at=datetime.now(),
         )
@@ -743,22 +687,7 @@ class ChatbotService:
 
         logger.info(f"스트리밍 챗봇 처리 시작 - 회의 ID: {payload.meeting_ids}")
 
-        # ========== 1) 질문 재해석 ==========
-        reinterpreted_question = reinterpret_question(payload.question)
-        logger.info(f"질문 재해석: '{payload.question}' → '{reinterpreted_question}'")
-
-        # ========== 2) 적대적 지능 질문 감지 (스트리밍에서는 일반 답변으로 처리) ==========
-        # 적대적 지능 분석은 단일 회의 + 비스트리밍 모드에서만 수행
-        # 스트리밍 모드에서는 일반 RAG 답변으로 처리
-
-        # ========== 3) 인사말/일상 대화 감지 ==========
-        skip_llm, direct_response = should_skip_llm(payload.question)
-        if skip_llm:
-            yield f"data: {direct_response}\n\n"
-            yield "data: [DONE]\n\n"
-            return
-
-        # ========== 4) 회의 조회 ==========
+        # ========== 1) 회의 조회 ==========
         meetings = (
             db.query(models.Meeting)
             .filter(models.Meeting.MEETING_ID.in_(payload.meeting_ids))
@@ -775,7 +704,7 @@ class ChatbotService:
 
         for meeting in meetings:
             retrieved_results = retriever.retrieve(
-                query=reinterpreted_question,
+                query=payload.question,
                 k=10,
                 meeting_id=meeting.MEETING_ID,
             )
@@ -798,7 +727,7 @@ class ChatbotService:
             fallback_system_prompt = """당신은 회의 전문 AI 어시스턴트입니다.
 회의 데이터에서 정보를 찾을 수 없었지만, 일반적인 조언을 제공하세요."""
 
-            fallback_user_prompt = f"사용자 질문: {reinterpreted_question}\n\n일반적인 조언을 제공해주세요."
+            fallback_user_prompt = f"사용자 질문: {payload.question}\n\n일반적인 조언을 제공해주세요."
 
             conversation_history = None
             if payload.conversation_history:
@@ -819,6 +748,7 @@ class ChatbotService:
             for chunk in stream_response:
                 if chunk.choices[0].delta.content:
                     yield f"data: {chunk.choices[0].delta.content}\n\n"
+                    time.sleep(0.02)  # 20ms 지연 (스트리밍 속도 조절)
 
             yield "data: [DONE]\n\n"
             return
@@ -835,57 +765,30 @@ class ChatbotService:
         combined_context = "\n\n".join(context_parts)
 
         # ========== 8) System/User 프롬프트 ==========
-        system_prompt = """당신은 사용자의 회의 기록과 업무를 돕는 'Round Note AI 비서'입니다.  
-회의 내용을 기반으로 하되, 필요할 경우 외부 자료를 검색·참조하여 **새로운 인사이트**를 제공합니다.  
-답변은 옆자리 유능한 동료가 정리해주는 듯 **친절하고 가독성 있게** 표현합니다.  
+        system_prompt = """당신은 한국어 기반 GPT 스타일 AI 어시스턴트입니다.
 
-[핵심 원칙]  
-1. **두괄식 요약**: 결론부터 제시하고, 불필요한 서론은 줄입니다.  
-2. **구조화된 표현**:  
-   - 📌, 📋, ✨ 이모지로 섹션 구분  
-   - **항목 제목은 반드시 볼드체로 강조** (예: **실험기기 준비 및 검토**)  
-   - 설명 문단은 불릿(-)으로 정리  
-   - 문단 구분은 반드시 `\n\n`으로 처리  
-   - 줄글 형식으로 이어 쓰지 말고, 항목별로 독립된 블록으로 작성  
-3. **톤 & 스타일**: "~입니다/합니다"체를 유지하되, 딱딱하지 않고 부드럽게.  
-   - 필요 시 **색상 강조(span 태그 활용)** 가능 (예: `<span class="text-red-600 font-bold">위험 분석</span>`)  
-4. **맥락 반영**: 회의 내용 + 외부 검색 결과를 결합해 **업무 효율을 높이는 인사이트**를 제공합니다.  
-5. **정직한 답변**: 정보가 부족하면 솔직히 말하고, 대안이나 추가 제안을 제공합니다.  
+[기본 원칙]
+- 답변은 짧고 명확하며 가독성이 좋아야 합니다.
+- 회의와 관련된 질문이면 제공된 회의 컨텍스트를 우선 사용합니다.
+- 회의와 무관한 질문이면 GPT처럼 자연스럽고 유연하게 대화합니다.
+- 정보가 부족하면 “해당 정보는 회의에 없었습니다”가 아니라 “찾기 어려워요”처럼 부드럽게 말합니다.
+- 보고서 형식(핵심 요약, 상세 내용, 추가 제안 등)을 강요하지 않습니다.
+- 목록은 최대 3개까지만, 문장은 1~3줄 단위로 끊어 가독성을 높입니다.
+- 과한 단락·장문 금지.
 
-[답변 구조 가이드]  
+[스타일 가이드]
+- 존댓말 유지하되 대화체로.
+- 이모지는 중요한 포인트에만 제한적으로 사용.
+- 불필요한 굵은 글씨, 색상 강조 금지.
+- 문단 간 줄바꿈은 필수.
 
-📌 **핵심 요약**  
-
-- 질문에 대한 결론을 2~3줄로 명확히 제시  
-
-📋 **상세 내용 (액션 아이템)**  
-
-1. **실험기기 준비 및 검토**  
-
-   - 회의 초반에 실험기기 필요성 언급이 있었으니, 관련 장비와 실험 계획을 점검하세요.  
-
-2. **상황 분석 및 대비책 마련**  
-
-   - 화산 폭발이나 천문학적 재앙 등 다양한 재앙 가능성에 대해 논의되었으니, <span class="text-red-600 font-bold">위험 분석</span>과 대응 전략을 수립하세요.  
-
-3. **심리적 지원 및 정보 공유**  
-
-   - 지구 멸망에 대한 불안과 걱정을 공유하는 부분이 있으니, 팀원들의 **심리적 안정**과 **신뢰할 수 있는 정보 제공**이 중요합니다.  
-
-4. **계속되는 논의 및 조사**  
-
-   - 회의 중 여러 질문과 의문이 나오고 있으니, 추가 조사와 지속적인 논의를 위한 자료 준비가 필요합니다.  
-
-✨ **추가 제안**  
-
-- 액션 아이템을 **우선순위별로 정리**하고, **담당자와 마감일**을 지정하세요.  
-- 외부 전문가 의견을 참고해 **리스크 대응 전략**을 보완하세요.  
-- 후속 회의에서 **액션 아이템 진행 상황**을 점검하는 시간을 마련하세요.  
+[안전 원칙]
+- 적대적/위험 질문은 안전하게 중립적으로.
 """
 
         user_prompt = (
             f"[RAG 검색 결과]\n{combined_context}\n\n"
-            f"[사용자 질문]\n{reinterpreted_question}\n\n"
+            f"[사용자 질문]\n{payload.question}\n\n"
             "위 검색 결과를 근거로 답변하세요."
         )
 
@@ -911,6 +814,7 @@ class ChatbotService:
         for chunk in stream_response:
             if chunk.choices[0].delta.content:
                 yield f"data: {chunk.choices[0].delta.content}\n\n"
+                time.sleep(0.02)  # 20ms 지연 (스트리밍 속도 조절)
 
         yield "data: [DONE]\n\n"
         logger.info("스트리밍 챗봇 처리 완료")

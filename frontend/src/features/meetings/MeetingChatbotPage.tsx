@@ -151,28 +151,28 @@ export function MeetingChatbotPage({ meetings }: MeetingChatbotPageProps) {
                 question: '이번 회의 핵심 내용을 요약해주세요',
                 description: '회의의 주요 내용, 논의사항, 결론을 간단히 정리해드립니다',
                 category: 'summary',
-                icon: '📝'
+                icon: ''
             },
             {
                 id: 'action',
                 question: '내가 해야 할 일이 무엇인가요?',
                 description: '회의에서 나에게 할당된 액션 아이템과 마감일을 확인합니다',
                 category: 'action',
-                icon: '✅'
+                icon: ''
             },
             {
                 id: 'decision',
                 question: '주요 결정사항과 합의된 내용은 무엇인가요?',
                 description: '회의에서 내려진 의사결정과 팀이 합의한 사항을 알려드립니다',
                 category: 'decision',
-                icon: '🎯'
+                icon: ''
             },
             {
                 id: 'adversarial',
-                question: '이 회의에서 놓친 부분이나 리스크가 있나요?',
-                description: '적대적 지능으로 논리적 불일치, 누락된 논점, 과거 결정과의 모순, 잠재 리스크를 탐지합니다',
+                question: '이 회의를 다각도로 분석해서 논리적 오류, 누락된 논점, 과거 결정과의 모순, 잠재 리스크, 개선 가능한 부분을 알려주세요',
+                description: '적대적 지능으로 회의를 종합 분석합니다',
                 category: 'adversarial',
-                icon: '🔍'
+                icon: ''
             },
         ];
 
