@@ -52,7 +52,7 @@ __pycache__/
 /backend/dist/
 /backend/*.egg-info
 
-# 권현재 테스트
+# 권현재 테스트 및 평가
 /backend/tests
 /backend/check_embeddings.py
 /backend/test_adversarial_intelligence.py
@@ -61,6 +61,15 @@ __pycache__/
 /backend/test_rag_chatbot.py
 /backend/create_test_meetings_for_adversarial.py
 /backend/generate_embeddings_for_existing_meetings.py
+/backend/download_youtube_transcripts.py
+/backend/evaluate_stt_performance.py
+/backend/EVALUATION_GUIDE.md
+/backend/download_youtube_transcript.py
+/backend/analyze_speaker_diarization.py
+/backend/calculate_der.py
+/backend/evaluation_results/
+/backend/ground_truth/
+/backend/backend/
 
 ###################################################
 # 3. Environment and Data
@@ -95,3 +104,7 @@ ELEVENLABS_INTEGRATION_COMPLETE.md
 analyze_wav_deep.py
 analyze_wav.py
 backend/.env.local
+
+# Root package.json (wrapper for frontend)
+/package.json
+/package-lock.json
